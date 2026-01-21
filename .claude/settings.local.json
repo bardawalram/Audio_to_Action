@@ -1,0 +1,43 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m venv:*)",
+      "Bash(venvScriptspip install -r requirements/development.txt)",
+      "Bash(\"venv/Scripts/pip\" install -r requirements/development.txt)",
+      "Bash(copy:*)",
+      "Bash(\"venv/Scripts/python\" manage.py migrate)",
+      "Bash(\"venv/Scripts/pip\" uninstall -y torch torchaudio)",
+      "Bash(\"venv/Scripts/pip\" install torch torchaudio --index-url https://download.pytorch.org/whl/cpu)",
+      "Bash(\"venv/Scripts/python\" -c \"import torch; print\\(torch.__version__\\)\")",
+      "Bash(\"backend/venv/Scripts/python\" -c \"import torch; print\\(torch.__version__\\)\")",
+      "Bash(docker exec:*)",
+      "Bash(\"venv/Scripts/python\" manage.py makemigrations)",
+      "Bash(\"venv/Scripts/pip\" list)",
+      "Bash(\"venv/Scripts/pip\" uninstall:*)",
+      "Bash(\"venv/Scripts/python\" -c \"import django.db.backends.postgresql.base as pg; print\\(pg.Database.__name__\\)\")",
+      "Bash(\"venv/Scripts/pip\" install psycopg[binary])",
+      "Bash(\"venv/Scripts/python\" -c \"import psycopg; conn = psycopg.connect\\(''dbname=reatoa_db user=postgres password=postgres host=localhost''\\); print\\(''Connection successful''\\); conn.close\\(\\)\")",
+      "Bash(docker restart:*)",
+      "Bash(\"venv/Scripts/python\" -c \"import psycopg; conn = psycopg.connect\\(''dbname=postgres user=postgres password=postgres host=localhost''\\); print\\(''Connection to postgres DB successful''\\); conn.close\\(\\)\")",
+      "Bash(\"venv/Scripts/python\" -c \"import psycopg; conn = psycopg.connect\\(''dbname=postgres user=postgres password=postgres host=localhost'', autocommit=True\\); cur = conn.cursor\\(\\); cur.execute\\(''DROP DATABASE IF EXISTS reatoa_db''\\); cur.execute\\(''CREATE DATABASE reatoa_db''\\); print\\(''Database created successfully''\\); conn.close\\(\\)\")",
+      "Bash(\"venv/Scripts/python\" -c \"import psycopg; conn = psycopg.connect\\(''dbname=reatoa_db user=postgres password=postgres host=localhost''\\); print\\(''Connection to reatoa_db successful!''\\); conn.close\\(\\)\")",
+      "Bash(\"venv/Scripts/python\" ../scripts/seed_database.py)",
+      "Bash(npm install:*)",
+      "Bash(\"venv/Scripts/python\" manage.py runserver)",
+      "Bash(npm run dev:*)",
+      "Bash(curl:*)",
+      "Bash(\"venv/Scripts/python\" manage.py makemigrations voice_processing)",
+      "Bash(\"venv/Scripts/python\" manage.py migrate voice_processing)",
+      "Bash(python manage.py runserver:*)",
+      "Bash(python manage.py shell:*)",
+      "Bash(python:*)",
+      "Bash(npm run build:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(clip)",
+      "Bash(tasklist:*)",
+      "Bash(timeout /t 5)",
+      "Bash(ping:*)"
+    ]
+  }
+}
