@@ -3,7 +3,7 @@ Command executor for voice commands.
 Prepares confirmation data and executes confirmed commands.
 """
 import logging
-from django.db import transaction
+from django.db import models, transaction
 from django.conf import settings
 from apps.academics.models import Student, ClassSection, Class, Section
 from apps.marks.models import Marks, Subject, ExamType
@@ -49,12 +49,38 @@ class CommandExecutor:
             return cls._prepare_navigation_confirmation('marks', None, user)
         elif intent == 'NAVIGATE_ATTENDANCE':
             return cls._prepare_navigation_confirmation('attendance', None, user)
+        elif intent == 'NAVIGATE_DASHBOARD':
+            return cls._prepare_navigation_confirmation('dashboard', None, user)
+        elif intent == 'NAVIGATE_REPORTS':
+            return cls._prepare_navigation_confirmation('reports', None, user)
+        elif intent == 'NAVIGATE_CLASS_REPORT':
+            return cls._prepare_navigation_confirmation('reports', {'tab': 'class'}, user)
+        elif intent == 'NAVIGATE_STUDENT_REPORT':
+            return cls._prepare_navigation_confirmation('reports', {'tab': 'student'}, user)
+        elif intent == 'NAVIGATE_ATTENDANCE_REPORT':
+            return cls._prepare_navigation_confirmation('reports', {'tab': 'attendance'}, user)
         elif intent == 'OPEN_MARKS_SHEET':
             return cls._prepare_navigation_confirmation('marks', entities, user)
         elif intent == 'OPEN_ATTENDANCE_SHEET':
             return cls._prepare_navigation_confirmation('attendance', entities, user)
         elif intent == 'UPDATE_MARKS':
             return cls._prepare_marks_update_confirmation(entities, user)
+        elif intent == 'DOWNLOAD_PROGRESS_REPORT':
+            return cls._prepare_progress_report_confirmation(entities, user)
+        elif intent == 'SELECT_EXAM_TYPE':
+            return cls._prepare_exam_type_selection(entities, user)
+        elif intent == 'COLLECT_FEE':
+            return cls._prepare_fee_collection_confirmation(entities, user)
+        elif intent == 'SHOW_FEE_DETAILS':
+            return cls._prepare_fee_details_confirmation(entities, user)
+        elif intent == 'OPEN_FEE_PAGE':
+            return cls._prepare_fee_page_navigation(entities, user)
+        elif intent == 'SHOW_DEFAULTERS':
+            return cls._prepare_defaulters_confirmation(entities, user)
+        elif intent == 'TODAY_COLLECTION':
+            return cls._prepare_today_collection_confirmation(entities, user)
+        elif intent == 'NAVIGATE_FEE_REPORTS':
+            return cls._prepare_navigation_confirmation('fee-reports', None, user)
         else:
             raise ValueError(f"Unknown intent: {intent}")
 
@@ -84,10 +110,20 @@ class CommandExecutor:
             return cls._execute_attendance(entities, confirmation_data, user)
         elif intent == 'VIEW_STUDENT':
             return cls._execute_student_view(entities, confirmation_data, user)
-        elif intent in ['NAVIGATE_MARKS', 'NAVIGATE_ATTENDANCE', 'OPEN_MARKS_SHEET', 'OPEN_ATTENDANCE_SHEET']:
+        elif intent in ['NAVIGATE_MARKS', 'NAVIGATE_ATTENDANCE', 'NAVIGATE_DASHBOARD', 'NAVIGATE_REPORTS', 'NAVIGATE_CLASS_REPORT', 'NAVIGATE_STUDENT_REPORT', 'NAVIGATE_ATTENDANCE_REPORT', 'OPEN_MARKS_SHEET', 'OPEN_ATTENDANCE_SHEET', 'SELECT_EXAM_TYPE', 'OPEN_FEE_PAGE', 'NAVIGATE_FEE_REPORTS', 'SELECT_SECTION']:
             return cls._execute_navigation(intent, confirmation_data, user)
         elif intent == 'UPDATE_MARKS':
             return cls._execute_marks_update(entities, confirmation_data, user)
+        elif intent == 'DOWNLOAD_PROGRESS_REPORT':
+            return cls._execute_progress_report_download(entities, confirmation_data, user)
+        elif intent == 'COLLECT_FEE':
+            return cls._execute_fee_collection(entities, confirmation_data, user)
+        elif intent == 'SHOW_FEE_DETAILS':
+            return cls._execute_navigation(intent, confirmation_data, user)
+        elif intent == 'SHOW_DEFAULTERS':
+            return cls._execute_navigation(intent, confirmation_data, user)
+        elif intent == 'TODAY_COLLECTION':
+            return cls._execute_navigation(intent, confirmation_data, user)
         else:
             raise ValueError(f"Unknown intent: {intent}")
 
@@ -330,7 +366,8 @@ class CommandExecutor:
                 'name': f"{class_obj.name}{section_obj.name}"
             },
             'date': today.isoformat(),
-            'student_count': actual_count,
+            'total_students': student_count,  # Total students in class
+            'student_count': actual_count,    # Students to be marked (after exclusions)
             'mark_all': entities.get('mark_all', False),
             'status': entities.get('status', 'PRESENT'),
             'excluded_rolls': excluded_rolls,
@@ -537,20 +574,56 @@ class CommandExecutor:
                         if class_section not in assigned_classes:
                             raise PermissionError(f"You are not assigned to class {entities['class']}{entities['section']}")
 
-                return {
+                # Build URL with optional exam type parameter
+                base_url = f"/{page_type}/{entities['class']}/{entities['section']}"
+                exam_type = entities.get('exam_type')
+                exam_type_display = entities.get('exam_type_display', '')
+
+                if exam_type and page_type == 'marks':
+                    url = f"{base_url}?examType={exam_type}"
+                    message = f"Navigate to {page_type} sheet for class {class_obj.name}{section_obj.name} ({exam_type_display})"
+                else:
+                    url = base_url
+                    message = f"Navigate to {page_type} sheet for class {class_obj.name}{section_obj.name}"
+
+                result = {
                     'navigation_type': 'sheet',
                     'page_type': page_type,
                     'class': entities['class'],
                     'section': entities['section'],
                     'class_name': f"{class_obj.name}{section_obj.name}",
-                    'url': f"/{page_type}/{entities['class']}/{entities['section']}",
-                    'message': f"Navigate to {page_type} sheet for class {class_obj.name}{section_obj.name}"
+                    'url': url,
+                    'message': message
                 }
+
+                # Include exam type info if present
+                if exam_type:
+                    result['exam_type'] = exam_type
+                    result['exam_type_display'] = exam_type_display
+
+                return result
 
             except Class.DoesNotExist:
                 raise ValueError(f"Class {entities['class']} not found")
             except Section.DoesNotExist:
                 raise ValueError(f"Section {entities['section']} not found")
+        elif entities and 'tab' in entities:
+            # Navigation to specific tab (for reports page)
+            tab = entities['tab']
+            tab_names = {
+                'overview': 'Overview',
+                'class': 'Class Reports',
+                'student': 'Student Reports',
+                'attendance': 'Attendance'
+            }
+            tab_display = tab_names.get(tab, tab.capitalize())
+            return {
+                'navigation_type': 'tab',
+                'page_type': page_type,
+                'tab': tab,
+                'url': f"/{page_type}?tab={tab}",
+                'message': f"Navigate to {tab_display} in Reports & Analytics"
+            }
         else:
             # Simple navigation to list page
             return {
@@ -559,6 +632,27 @@ class CommandExecutor:
                 'url': f"/{page_type}",
                 'message': f"Navigate to {page_type} management page"
             }
+
+    @classmethod
+    def _prepare_exam_type_selection(cls, entities, user):
+        """
+        Prepare navigation to marks page with specific exam type selected.
+
+        Args:
+            entities (dict): Contains exam_type (UNIT_TEST, MIDTERM, FINAL)
+            user: User who issued the command
+        """
+        exam_type = entities.get('exam_type', 'MIDTERM')
+        exam_type_display = entities.get('exam_type_display', 'Midterm Exam')
+
+        return {
+            'navigation_type': 'exam_type',
+            'page_type': 'marks',
+            'exam_type': exam_type,
+            'exam_type_display': exam_type_display,
+            'url': f"/marks?examType={exam_type}",
+            'message': f"Navigate to marks page with {exam_type_display} selected"
+        }
 
     @classmethod
     def _prepare_question_sheet_navigation(cls, entities, user):
@@ -656,7 +750,7 @@ class CommandExecutor:
         # Create audit log for navigation
         AuditLog.objects.create(
             user=user,
-            action='NAVIGATE',
+            action='VOICE_COMMAND',
             model_name='VoiceCommand',
             description=f"Voice navigation: {confirmation_data['message']}"
         )
@@ -1030,4 +1124,699 @@ class CommandExecutor:
             'updates': results,
             'total_marks': float(total_obtained),
             'count': len(results)
+        }
+
+    @classmethod
+    def _prepare_progress_report_confirmation(cls, entities, user):
+        """
+        Prepare confirmation for downloading student progress report.
+        """
+        # Validate required entities
+        required = ['roll_number', 'class', 'section']
+        missing = [field for field in required if field not in entities or not entities[field]]
+
+        if missing:
+            raise ValueError(f"Missing required fields: {', '.join(missing)}. Please specify student roll number, class and section.")
+
+        # Get student
+        try:
+            class_obj = Class.objects.get(grade_number=entities['class'])
+            section_obj = Section.objects.get(name=entities['section'])
+
+            class_section = ClassSection.objects.filter(
+                class_obj=class_obj,
+                section=section_obj
+            ).order_by('-academic_year').first()
+
+            if not class_section:
+                raise ValueError(f"Class {entities['class']}{entities['section']} not found")
+
+            student = Student.objects.get(
+                roll_number=entities['roll_number'],
+                class_section=class_section,
+                is_active=True
+            )
+
+        except Class.DoesNotExist:
+            raise ValueError(f"Class {entities['class']} not found")
+        except Section.DoesNotExist:
+            raise ValueError(f"Section {entities['section']} not found")
+        except Student.DoesNotExist:
+            raise ValueError(f"Student with roll number {entities['roll_number']} not found in class {entities['class']}{entities['section']}")
+
+        # Get student marks summary from database
+        from apps.marks.utils import get_student_marks_summary, calculate_grade
+        raw_marks_summary = get_student_marks_summary(student)
+
+        # Transform marks_summary to format expected by frontend
+        # The raw format is: {"Unit Test": {"marks": [...], "total_obtained": ..., ...}}
+        # Frontend expects: {"subjects": [...], "total_obtained": ..., ...}
+        marks_summary = {
+            'subjects': [],
+            'total_obtained': 0,
+            'total_max': 0,
+            'percentage': 0,
+            'grade': None
+        }
+
+        # Aggregate marks from all exam types (or use specific exam type)
+        for exam_name, exam_data in raw_marks_summary.items():
+            # Add subjects from each exam
+            for mark in exam_data.get('marks', []):
+                marks_summary['subjects'].append({
+                    'name': mark['subject'],
+                    'marks_obtained': mark['marks_obtained'],
+                    'max_marks': mark['max_marks'],
+                    'exam_type': exam_name
+                })
+
+            # Add to totals
+            marks_summary['total_obtained'] += exam_data.get('total_obtained', 0)
+            marks_summary['total_max'] += exam_data.get('total_max', 0)
+
+        # Calculate overall percentage and grade
+        if marks_summary['total_max'] > 0:
+            marks_summary['percentage'] = round(
+                (marks_summary['total_obtained'] / marks_summary['total_max']) * 100, 2
+            )
+            marks_summary['grade'] = calculate_grade(marks_summary['percentage'])
+
+        logger.info(f"Transformed marks_summary for progress report: {marks_summary}")
+
+        # Get attendance summary
+        total_sessions = AttendanceSession.objects.filter(
+            class_section=class_section
+        ).count()
+
+        present_count = AttendanceRecord.objects.filter(
+            student=student,
+            status='PRESENT'
+        ).count()
+
+        attendance_percentage = (present_count / total_sessions * 100) if total_sessions > 0 else 0
+
+        return {
+            'action_type': 'download',
+            'student': {
+                'id': student.id,
+                'name': student.get_full_name(),
+                'roll_number': student.roll_number,
+                'class': entities['class'],
+                'section': entities['section'],
+                'class_name': f"{class_obj.name}{section_obj.name}"
+            },
+            'marks_summary': marks_summary,
+            'attendance': {
+                'total_sessions': total_sessions,
+                'present_count': present_count,
+                'percentage': round(attendance_percentage, 2)
+            },
+            'message': f"Download progress report for {student.get_full_name()} (Roll {student.roll_number}, Class {class_obj.name}{section_obj.name})"
+        }
+
+    @classmethod
+    def _execute_progress_report_download(cls, entities, confirmation_data, user):
+        """
+        Execute progress report download (returns data for frontend to generate PDF).
+        """
+        # Create audit log for download action
+        AuditLog.objects.create(
+            user=user,
+            action='VIEW',
+            model_name='ProgressReport',
+            object_id=str(confirmation_data['student']['id']),
+            new_values={
+                'student': confirmation_data['student']['name'],
+                'class': confirmation_data['student']['class_name'],
+                'roll_number': confirmation_data['student']['roll_number']
+            },
+            description=f"Downloaded progress report for {confirmation_data['student']['name']}"
+        )
+
+        # Return all data needed for the frontend to generate PDF
+        return {
+            'success': True,
+            'action': 'download_progress_report',
+            'student': confirmation_data['student'],
+            'marks_summary': confirmation_data['marks_summary'],
+            'attendance': confirmation_data['attendance'],
+            'message': f"Progress report ready for {confirmation_data['student']['name']}"
+        }
+
+    # ============================================================
+    # FEE MANAGEMENT METHODS
+    # ============================================================
+
+    @classmethod
+    def _prepare_fee_collection_confirmation(cls, entities, user):
+        """
+        Prepare fee collection confirmation — looks up student, validates amount.
+        """
+        from apps.fees.models import FeeStructure, FeePayment, FeeDiscount
+        from django.db.models.functions import Coalesce
+        from django.db.models import Sum
+        from decimal import Decimal
+
+        # Require either roll_number or student_name, plus amount
+        has_roll = 'roll_number' in entities and entities['roll_number']
+        has_name = 'student_name' in entities and entities['student_name']
+        if not has_roll and not has_name:
+            raise ValueError("Missing student identifier. Provide roll number or student name.")
+        if 'amount' not in entities or not entities['amount']:
+            raise ValueError("Missing required field: amount")
+
+        from django.db.models import Q
+
+        has_class = 'class' in entities and entities['class']
+        has_section = 'section' in entities and entities['section']
+
+        try:
+            if has_class and has_section:
+                # Class and section provided — scoped lookup
+                class_obj = Class.objects.get(grade_number=entities['class'])
+                section_obj = Section.objects.get(name=entities['section'])
+                class_section = ClassSection.objects.filter(
+                    class_obj=class_obj, section=section_obj
+                ).order_by('-academic_year').first()
+
+                if not class_section:
+                    raise ValueError(f"Class {entities['class']}{entities['section']} not found")
+
+                if has_roll:
+                    student = Student.objects.get(
+                        roll_number=entities['roll_number'],
+                        class_section=class_section,
+                        is_active=True
+                    )
+                else:
+                    # Name search within class
+                    name_parts = entities['student_name'].strip().split()
+                    if len(name_parts) >= 2:
+                        first, last = name_parts[0], ' '.join(name_parts[1:])
+                        students = Student.objects.filter(
+                            Q(first_name__iexact=first, last_name__iexact=last) |
+                            Q(first_name__icontains=first, last_name__icontains=last),
+                            class_section=class_section, is_active=True
+                        ).distinct()
+                    else:
+                        students = Student.objects.filter(
+                            Q(first_name__iexact=name_parts[0]) | Q(last_name__iexact=name_parts[0]),
+                            class_section=class_section, is_active=True
+                        )
+                    if students.count() == 0:
+                        raise ValueError(f"No student named '{entities['student_name']}' in Class {entities['class']}{entities['section']}")
+                    elif students.count() > 1:
+                        names_list = ', '.join(f"{s.get_full_name()} (Roll {s.roll_number})" for s in students[:5])
+                        raise ValueError(f"Multiple students match '{entities['student_name']}': {names_list}. Please specify roll number.")
+                    student = students.first()
+            else:
+                # No class/section — search across all classes
+                if has_roll:
+                    students = Student.objects.filter(
+                        roll_number=entities['roll_number'], is_active=True
+                    ).select_related('class_section__class_obj', 'class_section__section')
+                else:
+                    name_parts = entities['student_name'].strip().split()
+                    if len(name_parts) >= 2:
+                        first, last = name_parts[0], ' '.join(name_parts[1:])
+                        students = Student.objects.filter(
+                            Q(first_name__iexact=first, last_name__iexact=last) |
+                            Q(first_name__icontains=first, last_name__icontains=last),
+                            is_active=True
+                        ).select_related('class_section__class_obj', 'class_section__section').distinct()
+                    else:
+                        students = Student.objects.filter(
+                            Q(first_name__iexact=name_parts[0]) | Q(last_name__iexact=name_parts[0]),
+                            is_active=True
+                        ).select_related('class_section__class_obj', 'class_section__section')
+
+                if students.count() == 0:
+                    identifier = entities.get('student_name') or f"roll {entities.get('roll_number')}"
+                    raise ValueError(f"No student found matching '{identifier}'")
+                elif students.count() == 1:
+                    student = students.first()
+                    class_section = student.class_section
+                    class_obj = class_section.class_obj
+                    section_obj = class_section.section
+                else:
+                    # Multiple matches — return list for user to select
+                    student_list = []
+                    for s in students.order_by('class_section__class_obj__grade_number', 'class_section__section__name'):
+                        cs = s.class_section
+                        student_list.append({
+                            'id': s.id,
+                            'name': s.get_full_name(),
+                            'roll_number': s.roll_number,
+                            'class': f"{cs.class_obj.name}{cs.section.name}",
+                            'class_grade': cs.class_obj.grade_number,
+                            'section_name': cs.section.name,
+                            'father_name': s.father_name or '',
+                        })
+                    identifier = entities.get('student_name') or f"Roll {entities.get('roll_number')}"
+                    return {
+                        'navigation_type': 'student_select',
+                        'message': f"Multiple students found for '{identifier}'. Please select one:",
+                        'students': student_list,
+                        'amount': entities['amount'],
+                        'payment_method': entities.get('payment_method', 'CASH'),
+                    }
+
+        except Class.DoesNotExist:
+            raise ValueError(f"Class {entities.get('class')} not found")
+        except Section.DoesNotExist:
+            raise ValueError(f"Section {entities.get('section')} not found")
+        except Student.DoesNotExist:
+            raise ValueError(f"Student with roll {entities.get('roll_number')} not found in {entities.get('class')}{entities.get('section')}")
+
+        # Get fee structures and balance
+        all_structures = FeeStructure.objects.filter(
+            class_obj=class_obj, is_active=True,
+            academic_year=class_section.academic_year
+        )
+        total_fees = all_structures.aggregate(
+            total=Coalesce(Sum('amount'), Decimal('0'))
+        )['total']
+
+        paid = FeePayment.objects.filter(
+            student=student,
+            fee_structure__class_obj=class_obj,
+            fee_structure__academic_year=class_section.academic_year,
+            payment_status__in=['PAID', 'PARTIAL'],
+        ).aggregate(total=Coalesce(Sum('amount_paid'), Decimal('0')))['total']
+
+        discount = FeeDiscount.objects.filter(
+            student=student,
+            fee_structure__class_obj=class_obj,
+            fee_structure__academic_year=class_section.academic_year,
+            is_active=True,
+        ).aggregate(total=Coalesce(Sum('discount_amount'), Decimal('0')))['total']
+
+        balance = total_fees - paid - discount
+
+        # If fee_type specified, prefer that structure; otherwise pick first
+        requested_fee_type = entities.get('fee_type')
+        fee_structure = None
+        fee_type_display = None
+
+        if requested_fee_type:
+            fee_structure = all_structures.filter(fee_type=requested_fee_type).first()
+            if fee_structure:
+                fee_type_display = fee_structure.get_fee_type_display()
+            else:
+                # Fee type not found for this class — fall back to first
+                fee_structure = all_structures.first()
+
+        if not fee_structure:
+            fee_structure = all_structures.first()
+
+        if fee_structure and not fee_type_display:
+            fee_type_display = fee_structure.get_fee_type_display()
+
+        return {
+            'student': {
+                'id': student.id,
+                'name': student.get_full_name(),
+                'roll_number': student.roll_number,
+                'class': f"{class_obj.name}{section_obj.name}",
+            },
+            'fee_structure_id': fee_structure.id if fee_structure else None,
+            'fee_type': requested_fee_type or (fee_structure.fee_type if fee_structure else None),
+            'fee_type_display': fee_type_display,
+            'amount': entities['amount'],
+            'payment_method': entities.get('payment_method', 'CASH'),
+            'total_fees': float(total_fees),
+            'already_paid': float(paid),
+            'balance_before': float(balance),
+            'balance_after': float(balance - entities['amount']),
+            'navigation_type': 'fee_collection',
+            'page_type': 'fees',
+            'url': f"/fees/{entities['class']}/{entities['section']}",
+            'message': f"Collect Rs. {entities['amount']} from {student.get_full_name()} (Roll {student.roll_number}, Class {class_obj.name}{section_obj.name}) via {entities.get('payment_method', 'CASH')}",
+        }
+
+    @classmethod
+    @transaction.atomic
+    def _execute_fee_collection(cls, entities, confirmation_data, user):
+        """
+        Execute fee collection — creates FeePayment record with receipt.
+        """
+        from apps.fees.models import FeeStructure, FeePayment
+        from decimal import Decimal
+
+        student = Student.objects.get(id=confirmation_data['student']['id'])
+        fee_structure = FeeStructure.objects.get(id=confirmation_data['fee_structure_id'])
+
+        amount = Decimal(str(confirmation_data['amount']))
+        payment_method = confirmation_data.get('payment_method', 'CASH')
+
+        balance_before = Decimal(str(confirmation_data['balance_before']))
+        if amount >= balance_before:
+            payment_status = 'PAID'
+        else:
+            payment_status = 'PARTIAL'
+
+        payment = FeePayment.objects.create(
+            student=student,
+            fee_structure=fee_structure,
+            amount_paid=amount,
+            payment_method=payment_method,
+            payment_status=payment_status,
+            collected_by=user,
+            remarks=f"Collected via voice command",
+        )
+
+        # Audit log
+        AuditLog.objects.create(
+            user=user,
+            action='CREATE',
+            model_name='FeePayment',
+            object_id=str(payment.id),
+            description=f"Voice fee collection: Rs. {amount} from {student.get_full_name()} ({payment.receipt_number})"
+        )
+
+        return {
+            'success': True,
+            'action': 'fee_collected',
+            'receipt_number': payment.receipt_number,
+            'amount': float(amount),
+            'student_name': student.get_full_name(),
+            'roll_number': student.roll_number,
+            'class_name': f"{student.class_section.class_obj.name}{student.class_section.section.name}",
+            'payment_method': payment.get_payment_method_display(),
+            'fee_type_display': fee_structure.get_fee_type_display(),
+            'term_display': fee_structure.get_term_display(),
+            'collected_by_name': user.get_full_name() if hasattr(user, 'get_full_name') else str(user),
+            'payment_date': payment.payment_date.strftime('%d/%m/%Y'),
+            'payment_time': payment.payment_date.strftime('%I:%M %p'),
+            'payment_status': payment_status,
+            'message': f"Rs. {amount} collected. Receipt: {payment.receipt_number}",
+        }
+
+    @classmethod
+    def _prepare_fee_details_confirmation(cls, entities, user):
+        """
+        Prepare fee details view for a specific student.
+        Shows total fees, paid, balance, payment history.
+        """
+        from apps.fees.models import FeeStructure, FeePayment, FeeDiscount
+        from django.db.models.functions import Coalesce
+        from django.db.models import Sum
+        from decimal import Decimal
+
+        roll_number = entities.get('roll_number')
+        if not roll_number:
+            raise ValueError("Missing roll number. Example: 'Show fee details of student 5 class 4B'")
+
+        # Get class/section from entities or context
+        grade = entities.get('class')
+        section_name = entities.get('section')
+
+        try:
+            if grade and section_name:
+                # Class and section provided — direct lookup
+                class_obj = Class.objects.get(grade_number=grade)
+                section_obj = Section.objects.get(name=section_name)
+                class_section = ClassSection.objects.filter(
+                    class_obj=class_obj, section=section_obj
+                ).order_by('-academic_year').first()
+
+                if not class_section:
+                    raise ValueError(f"Class {grade}{section_name} not found")
+
+                student = Student.objects.get(
+                    roll_number=roll_number,
+                    class_section=class_section,
+                    is_active=True
+                )
+            else:
+                # Class/section not provided — search across all active classes
+                students = Student.objects.filter(
+                    roll_number=roll_number,
+                    is_active=True
+                ).select_related('class_section__class_obj', 'class_section__section')
+
+                if students.count() == 0:
+                    raise ValueError(f"Student with roll {roll_number} not found")
+                elif students.count() > 1:
+                    # Multiple students with same roll in different classes — show selection list
+                    student_list = []
+                    for s in students.order_by('class_section__class_obj__grade_number', 'class_section__section__name'):
+                        cs = s.class_section
+                        student_list.append({
+                            'id': s.id,
+                            'name': s.get_full_name(),
+                            'roll_number': s.roll_number,
+                            'class': f"{cs.class_obj.name}{cs.section.name}",
+                            'class_grade': cs.class_obj.grade_number,
+                            'section_name': cs.section.name,
+                            'father_name': s.father_name or '',
+                        })
+                    return {
+                        'navigation_type': 'student_select',
+                        'message': f"Multiple students found with roll {roll_number}. Please select one:",
+                        'students': student_list,
+                        'intent_type': 'SHOW_FEE_DETAILS',
+                    }
+                else:
+                    student = students.first()
+
+                class_section = student.class_section
+                class_obj = class_section.class_obj
+                section_obj = class_section.section
+
+        except Class.DoesNotExist:
+            raise ValueError(f"Class {grade} not found")
+        except Section.DoesNotExist:
+            raise ValueError(f"Section {section_name} not found")
+        except Student.DoesNotExist:
+            raise ValueError(f"Student with roll {roll_number} not found in {grade}{section_name}")
+
+        # Get fee structures
+        structures = FeeStructure.objects.filter(
+            class_obj=class_obj, is_active=True,
+            academic_year=class_section.academic_year
+        )
+        total_fees = structures.aggregate(
+            total=Coalesce(Sum('amount'), Decimal('0'))
+        )['total']
+
+        # Get payments
+        payments = FeePayment.objects.filter(
+            student=student,
+            fee_structure__class_obj=class_obj,
+            fee_structure__academic_year=class_section.academic_year,
+            payment_status__in=['PAID', 'PARTIAL'],
+        ).order_by('-payment_date')
+
+        total_paid = payments.aggregate(
+            total=Coalesce(Sum('amount_paid'), Decimal('0'))
+        )['total']
+
+        # Get discounts
+        discount = FeeDiscount.objects.filter(
+            student=student,
+            fee_structure__class_obj=class_obj,
+            fee_structure__academic_year=class_section.academic_year,
+            is_active=True,
+        ).aggregate(total=Coalesce(Sum('discount_amount'), Decimal('0')))['total']
+
+        balance = total_fees - total_paid - discount
+
+        # Recent payments for history
+        recent_payments = []
+        for p in payments[:5]:
+            recent_payments.append({
+                'receipt_number': p.receipt_number,
+                'amount': float(p.amount_paid),
+                'method': p.payment_method,
+                'date': p.payment_date.strftime('%d/%m/%Y') if p.payment_date else '',
+                'status': p.payment_status,
+            })
+
+        # Fee structure breakdown
+        fee_breakdown = []
+        for fs in structures:
+            struct_paid = FeePayment.objects.filter(
+                student=student, fee_structure=fs,
+                payment_status__in=['PAID', 'PARTIAL'],
+            ).aggregate(total=Coalesce(Sum('amount_paid'), Decimal('0')))['total']
+            fee_breakdown.append({
+                'name': fs.get_fee_type_display(),
+                'amount': float(fs.amount),
+                'paid': float(struct_paid),
+                'balance': float(fs.amount - struct_paid),
+            })
+
+        # Determine status
+        if balance <= 0:
+            fee_status = 'PAID'
+        elif total_paid > 0:
+            fee_status = 'PARTIAL'
+        else:
+            fee_status = 'UNPAID'
+
+        return {
+            'navigation_type': 'fee_details',
+            'page_type': 'fees',
+            'student': {
+                'id': student.id,
+                'name': student.get_full_name(),
+                'roll_number': student.roll_number,
+                'class': f"{class_obj.name}{section_obj.name}",
+            },
+            'total_fees': float(total_fees),
+            'total_paid': float(total_paid),
+            'discount': float(discount),
+            'balance': float(balance),
+            'fee_status': fee_status,
+            'fee_breakdown': fee_breakdown,
+            'recent_payments': recent_payments,
+            'url': f"/fees/{grade}/{section_name}",
+            'message': f"Fee details for {student.get_full_name()} (Roll {roll_number}, Class {class_obj.name}{section_obj.name})",
+        }
+
+    @classmethod
+    def _prepare_fee_page_navigation(cls, entities, user):
+        """
+        Prepare navigation to fee page (list or specific class).
+        """
+        if 'class' in entities and 'section' in entities:
+            try:
+                class_obj = Class.objects.get(grade_number=entities['class'])
+                section_obj = Section.objects.get(name=entities['section'])
+                return {
+                    'navigation_type': 'sheet',
+                    'page_type': 'fees',
+                    'class': entities['class'],
+                    'section': entities['section'],
+                    'url': f"/fees/{entities['class']}/{entities['section']}",
+                    'message': f"Navigate to fees for class {class_obj.name}{section_obj.name}",
+                }
+            except (Class.DoesNotExist, Section.DoesNotExist):
+                pass
+
+        # Class specified but no section — show available sections to pick from
+        if 'class' in entities:
+            grade = entities['class']
+            try:
+                class_obj = Class.objects.get(grade_number=grade)
+                sections = Section.objects.all().order_by('name')
+                section_options = [
+                    {'name': s.name, 'url': f"/fees/{grade}/{s.name}"}
+                    for s in sections
+                ]
+                return {
+                    'navigation_type': 'section_select',
+                    'page_type': 'fees',
+                    'class': grade,
+                    'class_name': class_obj.name,
+                    'sections': section_options,
+                    'message': f"Select a section for class {class_obj.name} fee collection",
+                }
+            except Class.DoesNotExist:
+                pass
+
+        return {
+            'navigation_type': 'list',
+            'page_type': 'fees',
+            'url': '/fees',
+            'message': 'Navigate to fee management page',
+        }
+
+    @classmethod
+    def _prepare_defaulters_confirmation(cls, entities, user):
+        """
+        Prepare defaulters list for confirmation dialog.
+        """
+        from apps.fees.models import FeeStructure, FeePayment, FeeDiscount
+        from django.db.models.functions import Coalesce
+        from django.db.models import Sum
+        from decimal import Decimal
+
+        class_filter = entities.get('class')
+        students = Student.objects.filter(is_active=True)
+        if class_filter:
+            students = students.filter(class_section__class_obj__grade_number=class_filter)
+
+        defaulter_list = []
+        for student in students[:100]:  # Limit for performance
+            class_obj = student.class_section.class_obj
+            academic_year = student.class_section.academic_year
+
+            total_fees = FeeStructure.objects.filter(
+                class_obj=class_obj, is_active=True, academic_year=academic_year
+            ).aggregate(total=Coalesce(Sum('amount'), Decimal('0')))['total']
+
+            if total_fees == 0:
+                continue
+
+            paid = FeePayment.objects.filter(
+                student=student,
+                fee_structure__class_obj=class_obj,
+                fee_structure__academic_year=academic_year,
+                payment_status__in=['PAID', 'PARTIAL'],
+            ).aggregate(total=Coalesce(Sum('amount_paid'), Decimal('0')))['total']
+
+            discount = FeeDiscount.objects.filter(
+                student=student,
+                fee_structure__class_obj=class_obj,
+                fee_structure__academic_year=academic_year,
+                is_active=True,
+            ).aggregate(total=Coalesce(Sum('discount_amount'), Decimal('0')))['total']
+
+            balance = total_fees - paid - discount
+            if balance > 0:
+                cs = student.class_section
+                defaulter_list.append({
+                    'student_id': student.id,
+                    'name': student.get_full_name(),
+                    'roll_number': student.roll_number,
+                    'class_name': f"{cs.class_obj.name}{cs.section.name}",
+                    'total_fees': float(total_fees),
+                    'paid': float(paid),
+                    'balance': float(balance),
+                })
+
+        defaulter_list.sort(key=lambda x: x['balance'], reverse=True)
+
+        class_label = f" Class {class_filter}" if class_filter else ""
+        return {
+            'navigation_type': 'defaulters',
+            'page_type': 'fees',
+            'defaulters': defaulter_list[:20],
+            'total_count': len(defaulter_list),
+            'url': '/fee-reports?tab=defaulters',
+            'message': f"Found {len(defaulter_list)} students with pending fees{class_label}",
+        }
+
+    @classmethod
+    def _prepare_today_collection_confirmation(cls, entities, user):
+        """
+        Prepare today's collection summary.
+        """
+        from apps.fees.models import FeePayment
+        from django.db.models.functions import Coalesce
+        from django.db.models import Sum
+        from decimal import Decimal
+
+        today_payments = FeePayment.objects.filter(payment_date__date=date.today())
+
+        total = today_payments.aggregate(
+            total=Coalesce(Sum('amount_paid'), Decimal('0'))
+        )['total']
+
+        by_method = list(today_payments.values('payment_method').annotate(
+            total=Sum('amount_paid'),
+            count=models.Count('id'),
+        ).order_by('payment_method'))
+
+        return {
+            'navigation_type': 'today_collection',
+            'page_type': 'fees',
+            'total_collected': float(total),
+            'transaction_count': today_payments.count(),
+            'by_payment_method': by_method,
+            'date': date.today().isoformat(),
+            'url': '/fee-reports?tab=today',
+            'message': f"Today's collection: Rs. {total} ({today_payments.count()} transactions)",
         }

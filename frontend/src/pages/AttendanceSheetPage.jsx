@@ -3,6 +3,7 @@ import { useParams, useLocation, useNavigate } from 'react-router-dom'
 import { ArrowLeftIcon, CheckCircleIcon, XCircleIcon } from '@heroicons/react/24/outline'
 import FloatingVoiceButton from '../components/voice/FloatingVoiceButton'
 import ConfirmationDialog from '../components/voice/ConfirmationDialog'
+import VoiceReceiptModal from '../components/voice/VoiceReceiptModal'
 
 const AttendanceSheetPage = () => {
   const { classNum, section } = useParams()
@@ -26,13 +27,36 @@ const AttendanceSheetPage = () => {
     }
     setStudents(studentList)
 
-    // Initialize attendance (all present by default)
+    // Initialize attendance (all absent by default - will be updated by voice command or manual toggle)
     const initialAttendance = {}
     studentList.forEach(student => {
-      initialAttendance[student.id] = 'PRESENT'
+      initialAttendance[student.id] = 'ABSENT'
     })
     setAttendance(initialAttendance)
   }, [classNum, section])
+
+  // Listen for voice command attendance updates
+  useEffect(() => {
+    const handleAttendanceUpdate = (event) => {
+      const { status, excludedRolls, markedCount } = event.detail
+      console.log('[AttendanceSheetPage] Voice command attendance update:', event.detail)
+
+      // Update all students based on voice command
+      const newAttendance = {}
+      students.forEach(student => {
+        // Check if this student is excluded
+        const isExcluded = excludedRolls && excludedRolls.includes(student.rollNumber)
+        // If excluded, set opposite status; otherwise use the commanded status
+        newAttendance[student.id] = isExcluded ? (status === 'PRESENT' ? 'ABSENT' : 'PRESENT') : status
+      })
+      setAttendance(newAttendance)
+      setSaved(true)
+      console.log(`[AttendanceSheetPage] Updated ${markedCount} students to ${status}`)
+    }
+
+    window.addEventListener('attendanceUpdated', handleAttendanceUpdate)
+    return () => window.removeEventListener('attendanceUpdated', handleAttendanceUpdate)
+  }, [students])
 
   const toggleAttendance = (studentId) => {
     setAttendance(prev => ({
@@ -224,10 +248,16 @@ const AttendanceSheetPage = () => {
       </div>
 
       {/* Floating Voice Button */}
-      <FloatingVoiceButton />
+      <FloatingVoiceButton
+        voiceContext={{
+          context_class: classNum,
+          context_section: section
+        }}
+      />
 
       {/* Confirmation Dialog */}
       <ConfirmationDialog />
+      <VoiceReceiptModal />
     </div>
   )
 }

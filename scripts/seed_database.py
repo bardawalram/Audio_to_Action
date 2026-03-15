@@ -1,11 +1,13 @@
 """
 Database seeding script for ReATOA.
-Creates test data: classes, sections, students, teachers, subjects, exam types.
+Creates test data: classes, sections, students, teachers, subjects, exam types,
+accountant user, fee structures, and sample fee payments.
 """
 import os
 import sys
 import django
 from datetime import date, timedelta
+from decimal import Decimal
 import random
 
 # Setup Django environment
@@ -16,6 +18,7 @@ django.setup()
 from apps.authentication.models import CustomUser, Teacher
 from apps.academics.models import Class, Section, ClassSection, Student
 from apps.marks.models import Subject, ExamType
+from apps.fees.models import FeeStructure, FeePayment
 from faker import Faker
 
 fake = Faker()
@@ -255,6 +258,148 @@ def create_admin():
         print(f"  Admin user already exists")
 
 
+def create_accountant():
+    """Create accountant user"""
+    print("Creating accountant user...")
+    accountant, created = CustomUser.objects.get_or_create(
+        username='accountant1',
+        defaults={
+            'first_name': 'Rajesh',
+            'last_name': 'Sharma',
+            'email': 'accountant1@school.com',
+            'role': CustomUser.Role.ACCOUNTANT,
+            'is_active': True
+        }
+    )
+
+    if created:
+        accountant.set_password('password123')
+        accountant.save()
+        print(f"  Created accountant user: accountant1 / password123")
+    else:
+        print(f"  Accountant user already exists")
+
+    return accountant
+
+
+def create_fee_structures(classes):
+    """Create FeeStructure records for all classes and terms"""
+    print("Creating fee structures...")
+    academic_year = "2024-2025"
+    structure_count = 0
+
+    # Base tuition fees per class (increases with grade)
+    base_tuition = {
+        1: 5000, 2: 5500, 3: 6000, 4: 6500, 5: 7000,
+        6: 7500, 7: 8000, 8: 8500, 9: 9000, 10: 9500,
+    }
+
+    for class_obj in classes:
+        grade = class_obj.grade_number
+        tuition = base_tuition.get(grade, 5000)
+
+        # Create tuition fee for 4 terms
+        for term in ['TERM_1', 'TERM_2', 'TERM_3', 'TERM_4']:
+            term_num = int(term[-1])
+            due_month = {1: 4, 2: 7, 3: 10, 4: 1}[term_num]  # Apr, Jul, Oct, Jan
+            due_year = 2025 if due_month >= 4 else 2026
+
+            structure, created = FeeStructure.objects.get_or_create(
+                class_obj=class_obj,
+                fee_type='TUITION',
+                term=term,
+                academic_year=academic_year,
+                defaults={
+                    'amount': Decimal(str(tuition)),
+                    'due_date': date(due_year, due_month, 15),
+                    'is_active': True,
+                }
+            )
+            if created:
+                structure_count += 1
+
+        # Create annual exam fee
+        exam_fee = 1500 if grade <= 5 else 2000
+        structure, created = FeeStructure.objects.get_or_create(
+            class_obj=class_obj,
+            fee_type='EXAM',
+            term='ANNUAL',
+            academic_year=academic_year,
+            defaults={
+                'amount': Decimal(str(exam_fee)),
+                'due_date': date(2025, 4, 30),
+                'is_active': True,
+            }
+        )
+        if created:
+            structure_count += 1
+
+    print(f"  Created {structure_count} fee structures")
+
+
+def create_sample_payments(classes, accountant_user):
+    """Create sample fee payments (~70% payment rate)"""
+    print("Creating sample fee payments...")
+    academic_year = "2024-2025"
+    payment_count = 0
+    payment_methods = ['CASH', 'UPI', 'CARD', 'CHEQUE', 'ONLINE']
+    method_weights = [40, 30, 15, 10, 5]  # Cash and UPI most common
+
+    for class_obj in classes:
+        structures = FeeStructure.objects.filter(
+            class_obj=class_obj,
+            is_active=True,
+            academic_year=academic_year,
+        )
+
+        students = Student.objects.filter(
+            class_section__class_obj=class_obj,
+            class_section__academic_year=academic_year,
+            is_active=True,
+        )
+
+        for student in students:
+            for structure in structures:
+                # ~70% chance of payment
+                if random.random() > 0.70:
+                    continue
+
+                # Payment date within last 90 days
+                days_ago = random.randint(0, 90)
+                payment_date = date.today() - timedelta(days=days_ago)
+
+                method = random.choices(payment_methods, weights=method_weights, k=1)[0]
+
+                # Some payments are partial (10% chance)
+                if random.random() < 0.10:
+                    amount = structure.amount * Decimal(str(random.uniform(0.3, 0.8)))
+                    amount = amount.quantize(Decimal('1'))
+                    pay_status = 'PARTIAL'
+                else:
+                    amount = structure.amount
+                    pay_status = 'PAID'
+
+                # Check if payment already exists
+                exists = FeePayment.objects.filter(
+                    student=student,
+                    fee_structure=structure,
+                ).exists()
+
+                if not exists:
+                    FeePayment.objects.create(
+                        student=student,
+                        fee_structure=structure,
+                        amount_paid=amount,
+                        payment_method=method,
+                        payment_status=pay_status,
+                        payment_date=payment_date,
+                        collected_by=accountant_user,
+                    )
+                    payment_count += 1
+
+    print(f"  Created {payment_count} sample fee payments")
+
+
 def main():
     """Main seeding function"""
     print("=" * 60)
@@ -270,6 +415,9 @@ def main():
     create_students(class_sections)
     create_teachers(subjects, class_sections)
     create_admin()
+    accountant = create_accountant()
+    create_fee_structures(classes)
+    create_sample_payments(classes, accountant)
 
     print("=" * 60)
     print("Database seeding completed successfully!")
@@ -282,10 +430,13 @@ def main():
     print(f"  Subjects: {Subject.objects.count()}")
     print(f"  Exam Types: {ExamType.objects.count()}")
     print(f"  Teachers: {Teacher.objects.count()}")
+    print(f"  Fee Structures: {FeeStructure.objects.count()}")
+    print(f"  Fee Payments: {FeePayment.objects.count()}")
     print(f"  Total Users: {CustomUser.objects.count()}")
     print("\nLogin Credentials:")
     print("  Admin: admin / admin123")
     print("  Teachers: teacher1 to teacher5 / password123")
+    print("  Accountant: accountant1 / password123")
     print("=" * 60)
 
 

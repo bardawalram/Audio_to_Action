@@ -20,4 +20,15 @@ urlpatterns = [
         views.bulk_update_question_marks,
         name='bulk-update-question-marks'
     ),
+    # Reports & Analytics endpoints
+    path(
+        'reports/overview/',
+        views.reports_overview,
+        name='reports-overview'
+    ),
+    path(
+        'reports/class/<int:class_num>/<str:section>/',
+        views.class_report,
+        name='class-report'
+    ),
 ]

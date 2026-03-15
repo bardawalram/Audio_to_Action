@@ -1,17 +1,35 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowLeftIcon } from '@heroicons/react/24/outline'
+import FloatingVoiceButton from '../components/voice/FloatingVoiceButton'
+import ConfirmationDialog from '../components/voice/ConfirmationDialog'
+import VoiceReceiptModal from '../components/voice/VoiceReceiptModal'
 
 const MarksListPage = () => {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [classes, setClasses] = useState([])
-  const [selectedExamType, setSelectedExamType] = useState('UNIT_TEST')
+
+  // Get exam type from URL query parameter or default to UNIT_TEST
+  const examTypeFromUrl = searchParams.get('examType')
+  const [selectedExamType, setSelectedExamType] = useState(
+    examTypeFromUrl && ['UNIT_TEST', 'MIDTERM', 'FINAL'].includes(examTypeFromUrl)
+      ? examTypeFromUrl
+      : 'UNIT_TEST'
+  )
 
   const examTypes = [
     { value: 'UNIT_TEST', label: 'Unit Test' },
     { value: 'MIDTERM', label: 'Midterm Exam' },
     { value: 'FINAL', label: 'Final Exam' }
   ]
+
+  // Sync exam type with URL parameter when it changes (e.g., via voice command)
+  useEffect(() => {
+    if (examTypeFromUrl && ['UNIT_TEST', 'MIDTERM', 'FINAL'].includes(examTypeFromUrl)) {
+      setSelectedExamType(examTypeFromUrl)
+    }
+  }, [examTypeFromUrl])
 
   useEffect(() => {
     // Generate class list (1-10) with sections (A, B, C)
@@ -56,7 +74,7 @@ const MarksListPage = () => {
               </button>
               <div>
                 <h1 className="text-3xl font-bold text-gray-900">Marks Management</h1>
-                <p className="text-gray-500">Select a class to view/update marks</p>
+                <p className="text-gray-500">Select a class or use voice: "Open class 1A marks"</p>
               </div>
             </div>
             <div>
@@ -106,6 +124,11 @@ const MarksListPage = () => {
           ))}
         </div>
       </div>
+
+      {/* Voice Button and Confirmation Dialog */}
+      <FloatingVoiceButton />
+      <ConfirmationDialog />
+      <VoiceReceiptModal />
     </div>
   )
 }

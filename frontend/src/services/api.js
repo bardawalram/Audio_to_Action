@@ -2,7 +2,7 @@ import axios from 'axios'
 import { store } from '../store/store'
 import { updateToken, logout } from '../store/slices/authSlice'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
+const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api/v1'
 
 // Create axios instance
 const api = axios.create({

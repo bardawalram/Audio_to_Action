@@ -15,6 +15,11 @@ class VoiceCommand(models.Model):
         OPEN_MARKS_SHEET = 'OPEN_MARKS_SHEET', 'Open Marks Sheet'
         OPEN_ATTENDANCE_SHEET = 'OPEN_ATTENDANCE_SHEET', 'Open Attendance Sheet'
         UPDATE_MARKS = 'UPDATE_MARKS', 'Update Marks in Sheet'
+        COLLECT_FEE = 'COLLECT_FEE', 'Collect Fee'
+        OPEN_FEE_PAGE = 'OPEN_FEE_PAGE', 'Open Fee Page'
+        SHOW_DEFAULTERS = 'SHOW_DEFAULTERS', 'Show Defaulters'
+        TODAY_COLLECTION = 'TODAY_COLLECTION', 'Today Collection'
+        NAVIGATE_FEE_REPORTS = 'NAVIGATE_FEE_REPORTS', 'Navigate to Fee Reports'
         UNKNOWN = 'UNKNOWN', 'Unknown Intent'
 
     class Status(models.TextChoices):
@@ -32,7 +37,7 @@ class VoiceCommand(models.Model):
     audio_file = models.FileField(upload_to='voice_commands/%Y/%m/%d/')
     transcription = models.TextField(blank=True, null=True)
     intent = models.CharField(
-        max_length=30,
+        max_length=35,
         choices=Intent.choices,
         blank=True,
         null=True

@@ -1,17 +1,26 @@
 import { useState, useEffect } from 'react'
-import { useParams, useLocation, useNavigate } from 'react-router-dom'
+import { useParams, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowLeftIcon, PencilIcon, CheckIcon, XMarkIcon, ArrowTopRightOnSquareIcon } from '@heroicons/react/24/outline'
 import FloatingVoiceButton from '../components/voice/FloatingVoiceButton'
 import ConfirmationDialog from '../components/voice/ConfirmationDialog'
+import VoiceReceiptModal from '../components/voice/VoiceReceiptModal'
 
 const MarksSheetPage = () => {
   const { classNum, section } = useParams()
   const location = useLocation()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [students, setStudents] = useState([])
   const [marks, setMarks] = useState({})
   const [editingCell, setEditingCell] = useState(null)
-  const [examType, setExamType] = useState(location.state?.examType || 'UNIT_TEST')
+
+  // Get exam type from URL query param, then location state, then default
+  const examTypeFromUrl = searchParams.get('examType')
+  const [examType, setExamType] = useState(
+    (examTypeFromUrl && ['UNIT_TEST', 'MIDTERM', 'FINAL'].includes(examTypeFromUrl))
+      ? examTypeFromUrl
+      : (location.state?.examType || 'UNIT_TEST')
+  )
 
   const subjects = [
     { id: 1, name: 'Mathematics', maxMarks: 100 },
@@ -20,6 +29,13 @@ const MarksSheetPage = () => {
     { id: 4, name: 'Science', maxMarks: 100 },
     { id: 5, name: 'Social Studies', maxMarks: 100 }
   ]
+
+  // Sync exam type with URL parameter when it changes (e.g., via voice command)
+  useEffect(() => {
+    if (examTypeFromUrl && ['UNIT_TEST', 'MIDTERM', 'FINAL'].includes(examTypeFromUrl)) {
+      setExamType(examTypeFromUrl)
+    }
+  }, [examTypeFromUrl])
 
   useEffect(() => {
     console.log('=== MARKSSHEETPAGE USEEFFECT ===')
@@ -305,6 +321,7 @@ const MarksSheetPage = () => {
 
       {/* Confirmation Dialog */}
       <ConfirmationDialog />
+      <VoiceReceiptModal />
     </div>
   )
 }

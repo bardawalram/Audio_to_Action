@@ -1,7 +1,11 @@
 const AttendancePreview = ({ data }) => {
   if (!data) return null
 
-  const { class_section, date, student_count, mark_all, status, already_marked, action } = data
+  const { class_section, date, student_count, total_students, mark_all, status, already_marked, action, excluded_rolls, roll_number } = data
+
+  // Use total_students if available, otherwise fall back to student_count
+  const totalInClass = total_students || student_count
+  const toBeMarked = student_count
 
   return (
     <div className="space-y-4">
@@ -11,7 +15,7 @@ const AttendancePreview = ({ data }) => {
         <div className="grid grid-cols-2 gap-2 text-sm">
           <div>
             <span className="text-gray-600">Class:</span>
-            <span className="ml-2 font-medium">{class_section.name}</span>
+            <span className="ml-2 font-medium">{class_section?.name || 'N/A'}</span>
           </div>
           <div>
             <span className="text-gray-600">Date:</span>
@@ -19,11 +23,13 @@ const AttendancePreview = ({ data }) => {
           </div>
           <div>
             <span className="text-gray-600">Total Students:</span>
-            <span className="ml-2 font-medium">{student_count}</span>
+            <span className="ml-2 font-medium">{totalInClass}</span>
           </div>
           <div>
             <span className="text-gray-600">Status:</span>
-            <span className="ml-2 font-medium">{status}</span>
+            <span className={`ml-2 font-medium ${status === 'PRESENT' ? 'text-green-600' : 'text-red-600'}`}>
+              {status}
+            </span>
           </div>
         </div>
       </div>
@@ -34,9 +40,31 @@ const AttendancePreview = ({ data }) => {
         <div className="space-y-2 text-sm">
           {mark_all && (
             <p className="text-gray-700">
-              All <span className="font-semibold">{student_count} students</span> in class{' '}
-              <span className="font-semibold">{class_section.name}</span> will be marked as{' '}
-              <span className="font-semibold text-green-600">{status}</span>.
+              {excluded_rolls && excluded_rolls.length > 0 ? (
+                <>
+                  All students in class <span className="font-semibold">{class_section?.name}</span> will be marked as{' '}
+                  <span className={`font-semibold ${status === 'PRESENT' ? 'text-green-600' : 'text-red-600'}`}>{status}</span>
+                  {' '}<span className="font-semibold text-red-600">except roll {excluded_rolls.join(', ')}</span>.
+                  <br />
+                  <span className="text-green-600 font-medium">
+                    ({toBeMarked} of {totalInClass} students will be marked as {status})
+                  </span>
+                </>
+              ) : (
+                <>
+                  All <span className="font-semibold">{totalInClass} students</span> in class{' '}
+                  <span className="font-semibold">{class_section?.name}</span> will be marked as{' '}
+                  <span className={`font-semibold ${status === 'PRESENT' ? 'text-green-600' : 'text-red-600'}`}>{status}</span>.
+                </>
+              )}
+            </p>
+          )}
+
+          {roll_number && !mark_all && (
+            <p className="text-gray-700">
+              Student with roll number <span className="font-semibold">{roll_number}</span> in class{' '}
+              <span className="font-semibold">{class_section?.name}</span> will be marked as{' '}
+              <span className={`font-semibold ${status === 'PRESENT' ? 'text-green-600' : 'text-red-600'}`}>{status}</span>.
             </p>
           )}
 
@@ -54,7 +82,7 @@ const AttendancePreview = ({ data }) => {
       {/* Warning */}
       <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
         <p className="text-sm text-yellow-800">
-          Please confirm before marking attendance. This action will {action === 'update' ? 'update' : 'create'} attendance records for {student_count} students.
+          Please confirm before marking attendance. This action will {action === 'update' ? 'update' : 'create'} attendance records for {toBeMarked} students.
         </p>
       </div>
     </div>

@@ -1,7 +1,12 @@
 import { createSlice } from '@reduxjs/toolkit'
 
+// Restore user from localStorage so role persists across refresh
+const savedUser = localStorage.getItem('user')
+  ? JSON.parse(localStorage.getItem('user'))
+  : null
+
 const initialState = {
-  user: null,
+  user: savedUser,
   token: localStorage.getItem('token'),
   refreshToken: localStorage.getItem('refreshToken'),
   isAuthenticated: !!localStorage.getItem('token'),
@@ -25,6 +30,7 @@ const authSlice = createSlice({
       state.user = action.payload.user
       localStorage.setItem('token', action.payload.access)
       localStorage.setItem('refreshToken', action.payload.refresh)
+      localStorage.setItem('user', JSON.stringify(action.payload.user))
     },
     loginFailure: (state, action) => {
       state.loading = false
@@ -40,9 +46,11 @@ const authSlice = createSlice({
       state.error = null
       localStorage.removeItem('token')
       localStorage.removeItem('refreshToken')
+      localStorage.removeItem('user')
     },
     setUser: (state, action) => {
       state.user = action.payload
+      localStorage.setItem('user', JSON.stringify(action.payload))
     },
     updateToken: (state, action) => {
       state.token = action.payload

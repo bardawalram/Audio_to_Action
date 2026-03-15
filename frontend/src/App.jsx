@@ -1,16 +1,48 @@
+import { useEffect } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { useSelector } from 'react-redux'
+import { useSelector, useDispatch } from 'react-redux'
+import { setUser, logout } from './store/slices/authSlice'
+import authService from './services/authService'
 import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
+import AccountantDashboardPage from './pages/AccountantDashboardPage'
 import AttendanceListPage from './pages/AttendanceListPage'
 import AttendanceSheetPage from './pages/AttendanceSheetPage'
 import MarksListPage from './pages/MarksListPage'
 import MarksSheetPage from './pages/MarksSheetPage'
 import QuestionWisePage from './pages/QuestionWisePage'
+import ReportsPage from './pages/ReportsPage'
+import FeeListPage from './pages/FeeListPage'
+import FeeCollectionPage from './pages/FeeCollectionPage'
+import FeeReportsPage from './pages/FeeReportsPage'
 import ProtectedRoute from './components/common/ProtectedRoute'
 
+function RoleDashboard() {
+  const { user } = useSelector((state) => state.auth)
+
+  if (user?.role === 'ACCOUNTANT') {
+    return <AccountantDashboardPage />
+  }
+  return <DashboardPage />
+}
+
 function App() {
-  const { isAuthenticated } = useSelector((state) => state.auth)
+  const dispatch = useDispatch()
+  const { isAuthenticated, token, user } = useSelector((state) => state.auth)
+
+  // Fetch user profile on startup if we have a token but no user
+  useEffect(() => {
+    if (isAuthenticated && token && !user) {
+      authService.getCurrentUser()
+        .then((data) => {
+          dispatch(setUser(data))
+        })
+        .catch(() => {
+          // Token is invalid, logout
+          dispatch(logout())
+        })
+    }
+  }, [isAuthenticated, token, user, dispatch])
 
   return (
     <Routes>
@@ -22,7 +54,7 @@ function App() {
         path="/dashboard"
         element={
           <ProtectedRoute>
-            <DashboardPage />
+            <RoleDashboard />
           </ProtectedRoute>
         }
       />
@@ -63,6 +95,39 @@ function App() {
         element={
           <ProtectedRoute>
             <QuestionWisePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/reports"
+        element={
+          <ProtectedRoute>
+            <ReportsPage />
+          </ProtectedRoute>
+        }
+      />
+      {/* Fee Management Routes */}
+      <Route
+        path="/fees"
+        element={
+          <ProtectedRoute>
+            <FeeListPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/fees/:classNum/:section"
+        element={
+          <ProtectedRoute>
+            <FeeCollectionPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/fee-reports"
+        element={
+          <ProtectedRoute>
+            <FeeReportsPage />
           </ProtectedRoute>
         }
       />
