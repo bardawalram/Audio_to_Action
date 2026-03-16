@@ -8,8 +8,9 @@ import {
   ChartBarIcon
 } from '@heroicons/react/24/outline'
 import { logout } from '../store/slices/authSlice'
-import VoiceRecorder from '../components/voice/VoiceRecorder'
+import FloatingVoiceButton from '../components/voice/FloatingVoiceButton'
 import ConfirmationDialog from '../components/voice/ConfirmationDialog'
+import VoiceReceiptModal from '../components/voice/VoiceReceiptModal'
 import Notification from '../components/common/Notification'
 
 const DashboardPage = () => {
@@ -145,11 +146,12 @@ const DashboardPage = () => {
           </div>
 
           {/* Voice Recorder */}
-          <VoiceRecorder />
+          <FloatingVoiceButton />
         </div>
 
         {/* Confirmation Dialog */}
         <ConfirmationDialog />
+        <VoiceReceiptModal />
 
         {/* Notification */}
         <Notification />

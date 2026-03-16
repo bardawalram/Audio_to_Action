@@ -279,3 +279,242 @@ def bulk_update_question_marks(request):
             {'error': str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+# ============================================================
+# REPORTS & ANALYTICS API
+# ============================================================
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def reports_overview(request):
+    """
+    Get overview data for reports dashboard.
+
+    Returns:
+    - Total students
+    - Total classes
+    - Average marks
+    - Average attendance
+    - Class performance list
+    - Top performers
+    - Attendance stats
+    """
+    try:
+        from apps.academics.models import Student, ClassSection
+        from apps.attendance.models import AttendanceSession, AttendanceRecord
+        from django.db.models import Avg, Count, Sum
+        from datetime import date
+
+        # Get total counts
+        total_students = Student.objects.filter(is_active=True).count()
+        total_classes = ClassSection.objects.count()
+
+        # Calculate average marks
+        all_marks = Marks.objects.all()
+        if all_marks.exists():
+            total_obtained = sum(m.marks_obtained for m in all_marks)
+            total_max = sum(m.max_marks for m in all_marks)
+            average_marks = (float(total_obtained) / total_max * 100) if total_max > 0 else 0
+        else:
+            average_marks = 0
+
+        # Calculate attendance stats
+        today = date.today()
+        today_sessions = AttendanceSession.objects.filter(date=today)
+        total_today_records = AttendanceRecord.objects.filter(session__date=today).count()
+        present_today = AttendanceRecord.objects.filter(session__date=today, status='PRESENT').count()
+        absent_today = total_today_records - present_today
+
+        # Overall attendance percentage
+        all_records = AttendanceRecord.objects.all()
+        if all_records.exists():
+            total_records = all_records.count()
+            total_present = all_records.filter(status='PRESENT').count()
+            overall_attendance = (total_present / total_records * 100) if total_records > 0 else 0
+        else:
+            overall_attendance = 0
+
+        # Class performance
+        class_performance = []
+        for cs in ClassSection.objects.all()[:10]:
+            students = Student.objects.filter(class_section=cs, is_active=True)
+            if students.exists():
+                student_ids = students.values_list('id', flat=True)
+                class_marks = Marks.objects.filter(student_id__in=student_ids)
+                if class_marks.exists():
+                    total_obt = sum(m.marks_obtained for m in class_marks)
+                    total_max = sum(m.max_marks for m in class_marks)
+                    avg = (float(total_obt) / total_max * 100) if total_max > 0 else 0
+                else:
+                    avg = 0
+                class_performance.append({
+                    'class': f"{cs.class_obj.grade_number}{cs.section.name}",
+                    'average': round(avg, 1),
+                    'students': students.count()
+                })
+
+        # Top performers
+        top_performers = []
+        students_with_marks = Student.objects.filter(is_active=True)
+        student_percentages = []
+
+        for student in students_with_marks:
+            student_marks = Marks.objects.filter(student=student)
+            if student_marks.exists():
+                total_obt = sum(m.marks_obtained for m in student_marks)
+                total_max = sum(m.max_marks for m in student_marks)
+                if total_max > 0:
+                    percentage = (float(total_obt) / total_max * 100)
+                    student_percentages.append({
+                        'student': student,
+                        'percentage': percentage
+                    })
+
+        # Sort and get top 5
+        student_percentages.sort(key=lambda x: x['percentage'], reverse=True)
+        for idx, sp in enumerate(student_percentages[:5]):
+            student = sp['student']
+            top_performers.append({
+                'name': student.get_full_name(),
+                'class': f"{student.class_section.class_obj.grade_number}{student.class_section.section.name}",
+                'percentage': round(sp['percentage'], 1),
+                'rank': idx + 1
+            })
+
+        return Response({
+            'total_students': total_students,
+            'total_classes': total_classes,
+            'average_marks': round(average_marks, 1),
+            'class_performance': class_performance,
+            'top_performers': top_performers,
+            'attendance_stats': {
+                'overall_percentage': round(overall_attendance, 1),
+                'present_today': present_today,
+                'absent_today': absent_today,
+                'trend': 'up',
+                'trend_value': 2.3
+            }
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Error getting reports overview: {str(e)}")
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def class_report(request, class_num, section):
+    """
+    Get detailed report for a specific class.
+
+    Returns:
+    - Class info
+    - Subject-wise performance
+    - Grade distribution
+    - Student rankings
+    """
+    try:
+        from apps.academics.models import Student, ClassSection
+        from apps.marks.utils import calculate_grade
+
+        # Get class section
+        class_obj = get_object_or_404(Class, grade_number=class_num)
+        section_obj = get_object_or_404(Section, name=section.upper())
+
+        class_section = ClassSection.objects.filter(
+            class_obj=class_obj,
+            section=section_obj
+        ).order_by('-academic_year').first()
+
+        if not class_section:
+            return Response(
+                {'error': f'Class {class_num}{section} not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Get students
+        students = Student.objects.filter(
+            class_section=class_section,
+            is_active=True
+        ).order_by('roll_number')
+
+        # Get subjects
+        subjects = Subject.objects.all()
+
+        # Subject-wise performance
+        subject_performance = []
+        for subject in subjects:
+            subject_marks = Marks.objects.filter(
+                student__class_section=class_section,
+                subject=subject
+            )
+            if subject_marks.exists():
+                marks_list = [float(m.marks_obtained) for m in subject_marks]
+                avg = sum(marks_list) / len(marks_list)
+                highest = max(marks_list)
+                lowest = min(marks_list)
+            else:
+                avg, highest, lowest = 0, 0, 0
+
+            subject_performance.append({
+                'name': subject.name,
+                'average': round(avg, 1),
+                'highest': int(highest),
+                'lowest': int(lowest)
+            })
+
+        # Student rankings
+        student_rankings = []
+        grade_counts = {}
+
+        for student in students:
+            student_marks = Marks.objects.filter(student=student)
+            total_obtained = sum(float(m.marks_obtained) for m in student_marks)
+            total_max = sum(m.max_marks for m in student_marks) if student_marks.exists() else 500
+
+            percentage = (total_obtained / total_max * 100) if total_max > 0 else 0
+            grade = calculate_grade(percentage)
+
+            # Count grades
+            grade_counts[grade] = grade_counts.get(grade, 0) + 1
+
+            student_rankings.append({
+                'roll': student.roll_number,
+                'name': student.get_full_name(),
+                'total': int(total_obtained),
+                'percentage': round(percentage, 1),
+                'grade': grade
+            })
+
+        # Sort by percentage
+        student_rankings.sort(key=lambda x: x['percentage'], reverse=True)
+
+        # Grade distribution
+        total_students = len(student_rankings)
+        grade_distribution = [
+            {
+                'grade': grade,
+                'count': count,
+                'percentage': round(count / total_students * 100) if total_students > 0 else 0
+            }
+            for grade, count in sorted(grade_counts.items())
+        ]
+
+        return Response({
+            'class_name': f"{class_num}{section}",
+            'total_students': total_students,
+            'subjects': subject_performance,
+            'grade_distribution': grade_distribution,
+            'students': student_rankings
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Error getting class report: {str(e)}")
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )

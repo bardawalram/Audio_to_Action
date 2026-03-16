@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     'apps.attendance',
     'apps.voice_processing',
     'apps.audit',
+    'apps.fees',
 ]
 
 MIDDLEWARE = [
@@ -158,3 +159,9 @@ DEFAULT_EXAM_TYPE = config('DEFAULT_EXAM_TYPE', default='UNIT_TEST')
 # Audio Upload Settings
 MAX_AUDIO_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 ALLOWED_AUDIO_FORMATS = ['audio/webm', 'audio/wav', 'audio/mp3', 'audio/m4a', 'audio/flac']
+
+# Twilio WhatsApp Notification Settings
+TWILIO_ACCOUNT_SID = config('TWILIO_ACCOUNT_SID', default='')
+TWILIO_AUTH_TOKEN = config('TWILIO_AUTH_TOKEN', default='')
+TWILIO_WHATSAPP_FROM = config('TWILIO_WHATSAPP_FROM', default='whatsapp:+14155238886')
+WHATSAPP_NOTIFICATIONS_ENABLED = config('WHATSAPP_NOTIFICATIONS_ENABLED', default=False, cast=bool)

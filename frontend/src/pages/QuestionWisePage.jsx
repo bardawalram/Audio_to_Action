@@ -4,6 +4,7 @@ import { useDispatch, useSelector } from 'react-redux'
 import { ArrowLeftIcon, CheckIcon, PencilIcon } from '@heroicons/react/24/outline'
 import FloatingVoiceButton from '../components/voice/FloatingVoiceButton'
 import ConfirmationDialog from '../components/voice/ConfirmationDialog'
+import VoiceReceiptModal from '../components/voice/VoiceReceiptModal'
 import api from '../services/api'
 
 const QuestionWisePage = () => {
@@ -438,6 +439,7 @@ const QuestionWisePage = () => {
 
       {/* Confirmation Dialog */}
       <ConfirmationDialog />
+      <VoiceReceiptModal />
     </div>
   )
 }

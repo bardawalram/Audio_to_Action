@@ -26,6 +26,9 @@ const voiceService = {
     if (context.subjectId) {
       formData.append('context_subject_id', context.subjectId)
     }
+    if (context.currentPage) {
+      formData.append('context_page', context.currentPage)
+    }
 
     try {
       // CRITICAL: Delete Content-Type header to let browser set multipart/form-data with boundary
@@ -49,9 +52,12 @@ const voiceService = {
 
   /**
    * Confirm and execute voice command
+   * @param {number} commandId - The command ID to confirm
+   * @param {object} editedData - Optional edited confirmation data (if user modified the preview)
    */
-  confirmCommand: async (commandId) => {
-    const response = await api.post(`/voice/commands/${commandId}/confirm/`)
+  confirmCommand: async (commandId, editedData = null) => {
+    const payload = editedData ? { edited_data: editedData } : {}
+    const response = await api.post(`/voice/commands/${commandId}/confirm/`, payload)
     return response.data
   },
 

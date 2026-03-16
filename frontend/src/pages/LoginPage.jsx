@@ -46,7 +46,13 @@ const LoginPage = () => {
         })
       )
 
-      navigate('/dashboard')
+      // Role-based redirect
+      const userRole = response.user?.role
+      if (userRole === 'ACCOUNTANT') {
+        navigate('/dashboard')
+      } else {
+        navigate('/dashboard')
+      }
     } catch (err) {
       console.error('Login error:', err)
       const errorMessage =
@@ -133,9 +139,12 @@ const LoginPage = () => {
           <p className="text-sm text-gray-600 text-center mb-2">
             Demo Credentials:
           </p>
-          <div className="bg-gray-50 rounded p-3 text-sm text-gray-700">
+          <div className="bg-gray-50 rounded p-3 text-sm text-gray-700 space-y-1">
             <p>
               <span className="font-semibold">Teacher:</span> teacher1 / password123
+            </p>
+            <p>
+              <span className="font-semibold">Accountant:</span> accountant1 / password123
             </p>
             <p>
               <span className="font-semibold">Admin:</span> admin / admin123

@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeftIcon } from '@heroicons/react/24/outline'
+import FloatingVoiceButton from '../components/voice/FloatingVoiceButton'
+import ConfirmationDialog from '../components/voice/ConfirmationDialog'
+import VoiceReceiptModal from '../components/voice/VoiceReceiptModal'
 
 const AttendanceListPage = () => {
   const navigate = useNavigate()
@@ -50,7 +53,7 @@ const AttendanceListPage = () => {
               </button>
               <div>
                 <h1 className="text-3xl font-bold text-gray-900">Attendance Management</h1>
-                <p className="text-gray-500">Select a class to mark attendance</p>
+                <p className="text-gray-500">Select a class or use voice: "Open class 1A attendance"</p>
               </div>
             </div>
             <div>
@@ -96,6 +99,11 @@ const AttendanceListPage = () => {
           ))}
         </div>
       </div>
+
+      {/* Voice Button and Confirmation Dialog */}
+      <FloatingVoiceButton />
+      <ConfirmationDialog />
+      <VoiceReceiptModal />
     </div>
   )
 }

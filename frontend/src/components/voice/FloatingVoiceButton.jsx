@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
-import { useParams } from 'react-router-dom'
+import { useParams, useLocation } from 'react-router-dom'
 import { MicrophoneIcon, StopIcon, XMarkIcon } from '@heroicons/react/24/solid'
 import useVoiceRecorder from '../../hooks/useVoiceRecorder'
 import useSpeechRecognition from '../../hooks/useSpeechRecognition'
@@ -19,11 +19,13 @@ import {
 
 const FloatingVoiceButton = () => {
   const { classNum, section, rollNumber, subjectId } = useParams() // Get current context from URL
+  const location = useLocation() // Get current page path
   const dispatch = useDispatch()
   const [isExpanded, setIsExpanded] = useState(false)
   const { isRecording: isRecordingState, isProcessing, transcription: uploadedTranscription } = useSelector(
     (state) => state.voice
   )
+  const userRole = useSelector((state) => state.auth.user?.role)
 
   const { isRecording, audioBlob, error: recorderError, startRecording, stopRecording, reset } =
     useVoiceRecorder()
@@ -40,11 +42,22 @@ const FloatingVoiceButton = () => {
 
   const error = recorderError || recognitionError
 
+  // Use ref to always get latest transcript (avoids stale closure issue)
+  const transcriptRef = useRef(liveTranscript)
+  useEffect(() => {
+    transcriptRef.current = liveTranscript
+  }, [liveTranscript])
+
   // Handle audio blob upload
   useEffect(() => {
     // Only upload if we have a valid audio blob with size > 0
     if (audioBlob && audioBlob.size > 0 && !isProcessing) {
-      handleUpload()
+      // Add a small delay to allow Web Speech API to finalize transcript
+      const uploadTimer = setTimeout(() => {
+        handleUpload()
+      }, 500) // 500ms delay to let transcript finalize
+
+      return () => clearTimeout(uploadTimer)
     }
   }, [audioBlob])
 
@@ -72,7 +85,7 @@ const FloatingVoiceButton = () => {
     try {
       dispatch(uploadStart())
 
-      // Pass page context (class/section/roll/subject) if available
+      // Pass page context (class/section/roll/subject/page path) if available
       const context = {}
       if (classNum && section) {
         context.classNum = classNum
@@ -84,12 +97,18 @@ const FloatingVoiceButton = () => {
       if (subjectId) {
         context.subjectId = subjectId
       }
+      // Send current page path so backend can disambiguate (e.g. "go to reports" from fee page)
+      context.currentPage = location.pathname
+
+      // Use ref to get latest transcript (avoids stale closure)
+      const currentTranscript = transcriptRef.current || ''
+      console.log('[FloatingVoiceButton] Uploading with transcript:', currentTranscript)
 
       // Send live transcript from Web Speech API along with audio
       const result = await voiceService.uploadVoiceCommand(
         audioBlob,
         context,
-        liveTranscript.trim()
+        currentTranscript.trim()
       )
 
       console.log('[FloatingVoiceButton] Upload result:', result)
@@ -244,7 +263,7 @@ const FloatingVoiceButton = () => {
                     liveTranscript ? (
                       <span className="font-medium">{liveTranscript}</span>
                     ) : (
-                      <span className="text-gray-500 italic">Speak now...</span>
+                      <span className="text-gray-500 italic">Recording... (will transcribe after stop)</span>
                     )
                   ) : uploadedTranscription ? (
                     uploadedTranscription
@@ -264,11 +283,17 @@ const FloatingVoiceButton = () => {
               </div>
             )}
 
-            {/* Quick Tips */}
+            {/* Quick Tips — role-aware */}
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
               <p className="text-xs font-semibold text-blue-900 mb-1">Quick Examples:</p>
               <ul className="text-xs text-blue-800 space-y-1">
-                {classNum && section ? (
+                {userRole === 'ACCOUNTANT' ? (
+                  <>
+                    <li>• "Collect 5000 from roll 12 cash"</li>
+                    <li>• "Today's collection"</li>
+                    <li>• "Show defaulters"</li>
+                  </>
+                ) : classNum && section ? (
                   <>
                     <li>• "Update marks roll 1 maths 95"</li>
                     <li>• "Mark all present"</li>

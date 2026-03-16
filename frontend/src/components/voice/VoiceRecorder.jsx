@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import { MicrophoneIcon, StopIcon } from '@heroicons/react/24/solid'
 import useVoiceRecorder from '../../hooks/useVoiceRecorder'
@@ -21,6 +21,7 @@ const VoiceRecorder = () => {
   const { isRecording: isRecordingState, isProcessing } = useSelector(
     (state) => state.voice
   )
+  const userRole = useSelector((state) => state.auth.user?.role)
 
   const { isRecording, audioBlob, error: recorderError, startRecording, stopRecording, reset } =
     useVoiceRecorder()
@@ -36,11 +37,22 @@ const VoiceRecorder = () => {
 
   const error = recorderError || recognitionError
 
+  // Use ref to always get latest transcript (avoids stale closure issue)
+  const transcriptRef = useRef(liveTranscript)
+  useEffect(() => {
+    transcriptRef.current = liveTranscript
+  }, [liveTranscript])
+
   // Handle audio blob upload
   useEffect(() => {
     // Only upload if we have a valid audio blob with size > 0
     if (audioBlob && audioBlob.size > 0 && !isProcessing) {
-      handleUpload()
+      // Add a small delay to allow Web Speech API to finalize transcript
+      const uploadTimer = setTimeout(() => {
+        handleUpload()
+      }, 500) // 500ms delay to let transcript finalize
+
+      return () => clearTimeout(uploadTimer)
     }
   }, [audioBlob])
 
@@ -65,11 +77,15 @@ const VoiceRecorder = () => {
     try {
       dispatch(uploadStart())
 
+      // Use ref to get latest transcript (avoids stale closure)
+      const currentTranscript = transcriptRef.current || ''
+      console.log('[VoiceRecorder] Uploading with transcript:', currentTranscript)
+
       // Pass empty context for main voice recorder (no page context) + live transcript
       const result = await voiceService.uploadVoiceCommand(
         audioBlob,
         {},
-        liveTranscript.trim()
+        currentTranscript.trim()
       )
 
       dispatch(uploadSuccess(result))
@@ -167,7 +183,7 @@ const VoiceRecorder = () => {
                   liveTranscript ? (
                     <span className="font-medium">{liveTranscript}</span>
                   ) : (
-                    <span className="text-gray-500 italic">Speak now...</span>
+                    <span className="text-gray-500 italic">Recording... (transcription will appear after processing)</span>
                   )
                 ) : uploadedTranscription ? (
                   uploadedTranscription
@@ -187,15 +203,26 @@ const VoiceRecorder = () => {
             </div>
           )}
 
-          {/* Instructions */}
+          {/* Instructions — role-aware */}
           <div className="bg-blue-50 border border-blue-200 rounded p-4 w-full">
             <h3 className="font-semibold text-blue-900 mb-2">Example Commands:</h3>
             <ul className="text-sm text-blue-800 space-y-1">
-              <li>• "Open marks" or "Open attendance"</li>
-              <li>• "Open marks for class 8B"</li>
-              <li>• "Enter marks for roll number 1, class 8B. Maths 85, Hindi 78"</li>
-              <li>• "Mark attendance for class 8B"</li>
-              <li>• "Show details of student roll number 5, class 8B"</li>
+              {userRole === 'ACCOUNTANT' ? (
+                <>
+                  <li>• "Open fee collections" or "Open fee reports"</li>
+                  <li>• "Collect 5000 from roll 12 class 6A cash"</li>
+                  <li>• "Today's collection" or "Show defaulters"</li>
+                  <li>• "Show fee details of student 12345"</li>
+                </>
+              ) : (
+                <>
+                  <li>• "Open marks" or "Open attendance"</li>
+                  <li>• "Open marks for class 8B"</li>
+                  <li>• "Enter marks for roll number 1, class 8B. Maths 85, Hindi 78"</li>
+                  <li>• "Mark attendance for class 8B"</li>
+                  <li>• "Show details of student roll number 5, class 8B"</li>
+                </>
+              )}
             </ul>
           </div>
         </div>

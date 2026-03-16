@@ -2,6 +2,7 @@
 API views for voice processing.
 """
 import logging
+import re
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework.permissions import IsAuthenticated
@@ -76,6 +77,7 @@ def upload_voice_command(request):
         context_section = request.data.get('context_section')
         context_roll_number = request.data.get('context_roll_number')
         context_subject_id = request.data.get('context_subject_id')
+        context_page = request.data.get('context_page', '')
 
         # Get live transcript from Web Speech API (if available)
         live_transcript = request.data.get('live_transcript')
@@ -131,12 +133,222 @@ def upload_voice_command(request):
         print(f"Detected intent: {intent}", flush=True)
         sys.stdout.flush()
         logger.info(f"Detected intent: {intent}")
+
+        # ============================================================
+        # ROLE-BASED INTENT ENFORCEMENT
+        # Accountants can only use fee-related intents
+        # Teachers can only use marks/attendance-related intents
+        # ============================================================
+        user_role = getattr(request.user, 'role', 'TEACHER')
+
+        ACCOUNTANT_INTENTS = {
+            'COLLECT_FEE', 'SHOW_FEE_DETAILS', 'OPEN_FEE_PAGE',
+            'SHOW_DEFAULTERS', 'TODAY_COLLECTION', 'NAVIGATE_FEE_REPORTS',
+            'NAVIGATE_DASHBOARD', 'CANCEL', 'UNKNOWN', 'SELECT_SECTION', 'SELECT_STUDENT',
+        }
+        TEACHER_INTENTS = {
+            'UPDATE_MARKS', 'ENTER_MARKS', 'MARK_ATTENDANCE', 'VIEW_STUDENT',
+            'NAVIGATE_MARKS', 'NAVIGATE_ATTENDANCE', 'NAVIGATE_REPORTS',
+            'NAVIGATE_CLASS_REPORT', 'NAVIGATE_STUDENT_REPORT', 'NAVIGATE_ATTENDANCE_REPORT',
+            'OPEN_MARKS_SHEET', 'OPEN_ATTENDANCE_SHEET', 'SELECT_EXAM_TYPE',
+            'DOWNLOAD_PROGRESS_REPORT', 'BATCH_UPDATE_QUESTION_MARKS',
+            'UPDATE_QUESTION_MARKS', 'OPEN_QUESTION_SHEET',
+            'NAVIGATE_DASHBOARD', 'CANCEL', 'UNKNOWN', 'SELECT_SECTION',
+        }
+
+        if user_role == 'ACCOUNTANT' and intent not in ACCOUNTANT_INTENTS:
+            logger.info(f"[ROLE-BLOCK] Accountant tried teacher intent '{intent}', blocking")
+            # Redirect generic navigation to fee equivalents
+            if intent == 'NAVIGATE_REPORTS':
+                intent = 'NAVIGATE_FEE_REPORTS'
+            elif intent in ('NAVIGATE_MARKS', 'OPEN_MARKS_SHEET'):
+                intent = 'OPEN_FEE_PAGE'
+            elif intent == 'NAVIGATE_ATTENDANCE':
+                # Accountants don't have attendance — redirect to dashboard
+                intent = 'NAVIGATE_DASHBOARD'
+            else:
+                intent = 'NAVIGATE_DASHBOARD'
+        elif user_role != 'ACCOUNTANT' and intent in ('COLLECT_FEE', 'SHOW_FEE_DETAILS', 'OPEN_FEE_PAGE', 'SHOW_DEFAULTERS', 'TODAY_COLLECTION', 'NAVIGATE_FEE_REPORTS'):
+            logger.info(f"[ROLE-BLOCK] Teacher tried accountant intent '{intent}', blocking")
+            intent = 'NAVIGATE_DASHBOARD'
+
+        # Page-aware: "go to reports" from fee page → fee reports
+        if intent == 'NAVIGATE_REPORTS':
+            fee_pages = ['/fees', '/fee-reports']
+            on_fee_page = context_page and any(context_page.startswith(p) for p in fee_pages)
+            if on_fee_page or user_role == 'ACCOUNTANT':
+                logger.info(f"[PAGE-CONTEXT] Redirecting NAVIGATE_REPORTS → NAVIGATE_FEE_REPORTS")
+                intent = 'NAVIGATE_FEE_REPORTS'
+
         voice_command.intent = intent
         voice_command.save()
+
+        # Handle CANCEL intent - user wants to cancel/stop/undo
+        if intent == 'CANCEL':
+            logger.info("Cancel command received")
+            voice_command.status = VoiceCommand.Status.REJECTED
+            voice_command.save()
+
+            return Response(
+                {
+                    'command_id': voice_command.id,
+                    'transcription': voice_command.transcription,
+                    'intent': 'CANCEL',
+                    'confirmation_data': {
+                        'message': 'Command cancelled.',
+                        'action': 'close',  # Tell frontend to close dialog
+                        'needs_confirmation': False
+                    },
+                    'needs_confirmation': False
+                },
+                status=status.HTTP_200_OK
+            )
 
         if intent == 'UNKNOWN':
             # CRITICAL: Return CLARIFY intent instead of 400 error
             # This allows frontend to show helpful message instead of crashing
+            voice_command.status = VoiceCommand.Status.PENDING_CONFIRMATION
+            voice_command.save()
+
+            # Role-aware examples so users only see relevant commands
+            user_role = getattr(request.user, 'role', 'TEACHER')
+            if user_role == 'ACCOUNTANT':
+                examples = [
+                    'Fee: "Collect 5000 from roll 12 class 6A cash"',
+                    'Reports: "Show defaulters" or "Today\'s collection"',
+                    'Navigate: "Open fee collections" or "Open fee reports"',
+                    'Inquiry: "Show fee details of student 12345"',
+                ]
+            else:
+                examples = [
+                    'Navigate: "Open class 1A marks" or "Go to class 2B attendance"',
+                    'Subject marks: "Update marks for student 1 maths 90 hindi 80"',
+                    'Question marks: "Update question 3 to 8 marks"',
+                    'Attendance: "Mark all present" or "Mark attendance for class 8B"',
+                    'Fee: "Collect 5000 from roll 12 class 6A cash"',
+                    'Reports: "Show defaulters" or "Today\'s collection"',
+                ]
+
+            return Response(
+                {
+                    'command_id': voice_command.id,
+                    'transcription': voice_command.transcription,
+                    'intent': 'CLARIFY',
+                    'confirmation_data': {
+                        'message': 'I could not understand your command. Please try again with one of these formats:',
+                        'examples': examples,
+                        'needs_confirmation': False
+                    },
+                    'needs_confirmation': False
+                },
+                status=status.HTTP_200_OK  # 200 OK, not 400!
+            )
+
+        # Handle SELECT_SECTION intent - user specified class but not section
+        if intent == 'SELECT_SECTION':
+            from apps.academics.models import Class, Section, ClassSection
+
+            # Extract class number from normalized text
+            class_number = None
+
+            # Check for word forms (first, second, third)
+            word_to_num = {'first': 1, 'second': 2, 'third': 3}
+            for word, num in word_to_num.items():
+                if word in normalized_text.lower():
+                    class_number = num
+                    break
+
+            # Check for numeric forms if not found
+            if class_number is None:
+                import re
+                # Match patterns like "1st", "2nd", "class 1", etc.
+                match = re.search(r'(\d+)', normalized_text)
+                if match:
+                    class_number = int(match.group(1))
+
+            if class_number:
+                try:
+                    # Get the class object
+                    class_obj = Class.objects.filter(grade_number=class_number).first()
+
+                    if class_obj:
+                        # Get all sections available for this class
+                        class_sections = ClassSection.objects.filter(
+                            class_obj=class_obj
+                        ).select_related('section').order_by('section__name')
+
+                        # Role-aware URL: accountants go to fee pages, teachers go to marks
+                        url_prefix = '/fees' if user_role == 'ACCOUNTANT' else '/marks'
+
+                        available_sections = [
+                            {
+                                'name': cs.section.name,
+                                'display': f"Section {cs.section.name}",
+                                'url': f"{url_prefix}/{class_number}/{cs.section.name}"
+                            }
+                            for cs in class_sections
+                        ]
+
+                        if available_sections:
+                            voice_command.status = VoiceCommand.Status.PENDING_CONFIRMATION
+                            voice_command.save()
+
+                            return Response(
+                                {
+                                    'command_id': voice_command.id,
+                                    'transcription': voice_command.transcription,
+                                    'intent': 'SELECT_SECTION',
+                                    'confirmation_data': {
+                                        'message': f"Select a section for Class {class_obj.name} {'fee collection' if user_role == 'ACCOUNTANT' else 'marks'}",
+                                        'class_number': class_number,
+                                        'class_name': class_obj.name,
+                                        'sections': available_sections,
+                                        'needs_confirmation': False
+                                    },
+                                    'needs_confirmation': False
+                                },
+                                status=status.HTTP_200_OK
+                            )
+                        else:
+                            # No sections found for this class
+                            voice_command.status = VoiceCommand.Status.PENDING_CONFIRMATION
+                            voice_command.save()
+
+                            return Response(
+                                {
+                                    'command_id': voice_command.id,
+                                    'transcription': voice_command.transcription,
+                                    'intent': 'CLARIFY',
+                                    'confirmation_data': {
+                                        'message': f'No sections found for Class {class_obj.name}. Please try a different class.',
+                                        'needs_confirmation': False
+                                    },
+                                    'needs_confirmation': False
+                                },
+                                status=status.HTTP_200_OK
+                            )
+                    else:
+                        # Class not found
+                        voice_command.status = VoiceCommand.Status.PENDING_CONFIRMATION
+                        voice_command.save()
+
+                        return Response(
+                            {
+                                'command_id': voice_command.id,
+                                'transcription': voice_command.transcription,
+                                'intent': 'CLARIFY',
+                                'confirmation_data': {
+                                    'message': f'Class {class_number} not found. Please try again.',
+                                    'needs_confirmation': False
+                                },
+                                'needs_confirmation': False
+                            },
+                            status=status.HTTP_200_OK
+                        )
+                except Exception as e:
+                    logger.error(f"Error fetching sections: {str(e)}")
+
+            # Fallback if class number couldn't be extracted
             voice_command.status = VoiceCommand.Status.PENDING_CONFIRMATION
             voice_command.save()
 
@@ -146,18 +358,53 @@ def upload_voice_command(request):
                     'transcription': voice_command.transcription,
                     'intent': 'CLARIFY',
                     'confirmation_data': {
-                        'message': 'I could not understand your command. Please try again with one of these formats:',
-                        'examples': [
-                            'Single question: "Update question 3 to 8 marks"',
-                            'Batch update: "Questions 1, 2, 3 AS 4, 5, 6"',
-                            'Natural speech: "For question 1 give 5, for question 2 give 6"',
-                            'Range: "Questions 1 to 10 AS 7, 8, 9, 1, 2, 3, 4, 5, 6, 8"'
-                        ],
+                        'message': 'Please specify a class number. For example: "Open class 1A marks"',
                         'needs_confirmation': False
                     },
                     'needs_confirmation': False
                 },
-                status=status.HTTP_200_OK  # 200 OK, not 400!
+                status=status.HTTP_200_OK
+            )
+
+        # Step 2.5: Check for incomplete commands (Section 6 Edge Case)
+        completeness = IntentExtractor.check_command_completeness(normalized_text, intent)
+        if not completeness['is_complete']:
+            logger.warning(f"Incomplete command detected: {completeness['missing']}")
+            print(f"Incomplete command: {completeness}", flush=True)
+
+            voice_command.status = VoiceCommand.Status.PENDING_CONFIRMATION
+            voice_command.save()
+
+            # Role-aware examples for incomplete commands
+            user_role = getattr(request.user, 'role', 'TEACHER')
+            if user_role == 'ACCOUNTANT':
+                incomplete_examples = [
+                    'Fee: "Collect 5000 from roll 12 class 6A cash"',
+                    'Reports: "Today\'s collection" or "Show defaulters"',
+                    'Navigate: "Open fee collections"',
+                ]
+            else:
+                incomplete_examples = [
+                    'Marks: "Update marks for roll 1 maths 90"',
+                    'Question: "Question 3 to 8 marks"',
+                    'Attendance: "Mark all present"',
+                    'Navigate: "Open class 2C marks"',
+                ]
+
+            return Response(
+                {
+                    'command_id': voice_command.id,
+                    'transcription': voice_command.transcription,
+                    'intent': 'INCOMPLETE',
+                    'confirmation_data': {
+                        'message': completeness['suggestion'] or 'Your command seems incomplete.',
+                        'missing': completeness['missing'],
+                        'examples': incomplete_examples,
+                        'needs_confirmation': False
+                    },
+                    'needs_confirmation': False
+                },
+                status=status.HTTP_200_OK
             )
 
         # Step 3: Extract entities
@@ -187,6 +434,32 @@ def upload_voice_command(request):
             voice_command.entities = entities
             voice_command.save()
 
+            # SECTION 14: Check for incomplete batch (some marks missing)
+            if 'incomplete' in entities:
+                incomplete = entities['incomplete']
+                logger.info(f"Batch incomplete: {incomplete}")
+
+                # Return the paired data with info about missing items
+                # This allows the user to fill in missing marks without repeating
+                return Response(
+                    {
+                        'command_id': voice_command.id,
+                        'transcription': voice_command.transcription,
+                        'intent': 'BATCH_INCOMPLETE',
+                        'confirmation_data': {
+                            'message': incomplete.get('message'),
+                            'incomplete_type': incomplete.get('type'),
+                            'paired_updates': incomplete.get('paired_updates', []),
+                            'missing_questions': incomplete.get('missing_questions', []),
+                            'extra_marks': incomplete.get('extra_marks', []),
+                            'needs_confirmation': True,
+                            'allow_partial_confirm': True,
+                        },
+                        'needs_confirmation': True
+                    },
+                    status=status.HTTP_200_OK
+                )
+
         except Exception as e:
             logger.error(f"Entity extraction failed: {str(e)}")
             voice_command.status = VoiceCommand.Status.FAILED
@@ -204,6 +477,65 @@ def upload_voice_command(request):
                 entities,
                 request.user
             )
+
+            # If the fee page navigation needs section selection, return SELECT_SECTION
+            if confirmation_data.get('navigation_type') == 'section_select':
+                voice_command.intent = 'SELECT_SECTION'
+                voice_command.confirmation_data = confirmation_data
+                voice_command.save()
+
+                # Add display field for frontend section buttons
+                for sec in confirmation_data.get('sections', []):
+                    if 'display' not in sec:
+                        sec['display'] = f"Section {sec['name']}"
+
+                return Response(
+                    {
+                        'command_id': voice_command.id,
+                        'transcription': voice_command.transcription,
+                        'intent': 'SELECT_SECTION',
+                        'confirmation_data': {
+                            'message': confirmation_data['message'],
+                            'class_number': confirmation_data.get('class'),
+                            'class_name': confirmation_data.get('class_name'),
+                            'sections': confirmation_data['sections'],
+                            'needs_confirmation': False
+                        },
+                        'needs_confirmation': False
+                    },
+                    status=status.HTTP_200_OK
+                )
+
+            # If fee operation needs student selection, return SELECT_STUDENT
+            if confirmation_data.get('navigation_type') == 'student_select':
+                voice_command.intent = 'SELECT_STUDENT'
+                voice_command.confirmation_data = confirmation_data
+                voice_command.save()
+
+                select_data = {
+                    'message': confirmation_data['message'],
+                    'students': confirmation_data['students'],
+                    'needs_confirmation': False,
+                }
+                # Pass through intent-specific fields
+                if 'amount' in confirmation_data:
+                    select_data['amount'] = confirmation_data['amount']
+                if 'payment_method' in confirmation_data:
+                    select_data['payment_method'] = confirmation_data['payment_method']
+                if 'intent_type' in confirmation_data:
+                    select_data['intent_type'] = confirmation_data['intent_type']
+
+                return Response(
+                    {
+                        'command_id': voice_command.id,
+                        'transcription': voice_command.transcription,
+                        'intent': 'SELECT_STUDENT',
+                        'confirmation_data': select_data,
+                        'needs_confirmation': False
+                    },
+                    status=status.HTTP_200_OK
+                )
+
             voice_command.confirmation_data = confirmation_data
             voice_command.save()
 
@@ -217,14 +549,44 @@ def upload_voice_command(request):
                 status=status.HTTP_403_FORBIDDEN
             )
         except ValueError as e:
-            logger.error(f"Invalid data: {str(e)}")
+            error_message = str(e)
+            logger.warning(f"Data validation issue: {error_message}")
+
+            # Check if it's a "not found" error - show friendly warning instead of error
+            if 'not found' in error_message.lower():
+                # Return a friendly warning dialog instead of error
+                voice_command.status = VoiceCommand.Status.PENDING_CONFIRMATION
+                voice_command.intent = 'DATA_NOT_FOUND'
+                voice_command.save()
+
+                return Response(
+                    {
+                        'command_id': voice_command.id,
+                        'transcription': voice_command.transcription,
+                        'intent': 'DATA_NOT_FOUND',
+                        'confirmation_data': {
+                            'message': error_message,
+                            'warning_type': 'NOT_FOUND',
+                            'suggestions': [
+                                'Check if the student/roll number exists in this class',
+                                'Make sure you are on the correct class page',
+                                'Try saying the command again with the correct details',
+                            ],
+                            'needs_confirmation': False
+                        },
+                        'needs_confirmation': False
+                    },
+                    status=status.HTTP_200_OK
+                )
+
+            # For other validation errors, return 400
             voice_command.status = VoiceCommand.Status.FAILED
-            voice_command.error_message = str(e)
+            voice_command.error_message = error_message
             voice_command.save()
             return Response(
                 {
                     'error': 'Invalid command data',
-                    'details': str(e),
+                    'details': error_message,
                     'transcription': voice_command.transcription
                 },
                 status=status.HTTP_400_BAD_REQUEST
@@ -266,6 +628,7 @@ def upload_voice_command(request):
 def confirm_voice_command(request, command_id):
     """
     Confirm and execute a voice command.
+    Accepts optional 'edited_data' in request body for user-edited marks.
     """
     try:
         # Get voice command
@@ -276,6 +639,17 @@ def confirm_voice_command(request, command_id):
             status=VoiceCommand.Status.PENDING_CONFIRMATION
         )
 
+        # Check for edited data from frontend
+        edited_data = request.data.get('edited_data')
+        if edited_data:
+            logger.info(f"Using edited confirmation data: {edited_data}")
+            # Merge edited data with original (edited data takes priority)
+            confirmation_data = {**voice_command.confirmation_data, **edited_data}
+            # Save the edited data for audit trail
+            voice_command.confirmation_data = confirmation_data
+        else:
+            confirmation_data = voice_command.confirmation_data
+
         # Update status to confirmed
         voice_command.status = VoiceCommand.Status.CONFIRMED
         voice_command.save()
@@ -285,7 +659,7 @@ def confirm_voice_command(request, command_id):
             result = CommandExecutor.execute(
                 voice_command.intent,
                 voice_command.entities,
-                voice_command.confirmation_data,
+                confirmation_data,
                 request.user
             )
 

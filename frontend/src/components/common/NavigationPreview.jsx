@@ -1,7 +1,13 @@
 import { ArrowRightIcon, FolderIcon, DocumentTextIcon } from '@heroicons/react/24/outline'
 
 const NavigationPreview = ({ data }) => {
-  const { navigation_type, page_type, class_name, message, url } = data
+  const { navigation_type, page_type, class_name, message, url, exam_type_display } = data
+
+  const getNavigationTypeLabel = () => {
+    if (navigation_type === 'sheet') return 'Class Sheet'
+    if (navigation_type === 'exam_type') return 'Exam Selection'
+    return 'List Page'
+  }
 
   return (
     <div className="space-y-4">
@@ -17,7 +23,7 @@ const NavigationPreview = ({ data }) => {
         <div>
           <p className="text-sm text-gray-600">Navigation Type</p>
           <p className="font-semibold text-gray-900 capitalize">
-            {navigation_type === 'sheet' ? 'Class Sheet' : 'List Page'}
+            {getNavigationTypeLabel()}
           </p>
         </div>
       </div>
@@ -29,6 +35,7 @@ const NavigationPreview = ({ data }) => {
             <p className="text-sm text-purple-700 font-medium mb-1">Destination:</p>
             <p className="text-lg font-bold text-purple-900 capitalize">
               {page_type} {navigation_type === 'sheet' && class_name && `- Class ${class_name}`}
+              {navigation_type === 'exam_type' && exam_type_display && ` - ${exam_type_display}`}
             </p>
             <p className="text-sm text-gray-600 mt-2">{message}</p>
           </div>

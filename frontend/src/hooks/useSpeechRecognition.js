@@ -26,12 +26,22 @@ const useSpeechRecognition = () => {
     recognition.interimResults = true
     recognition.lang = 'en-US'
 
+    recognition.onstart = () => {
+      console.log('[SpeechRecognition] Started listening')
+    }
+
+    recognition.onaudiostart = () => {
+      console.log('[SpeechRecognition] Audio capture started')
+    }
+
     recognition.onresult = (event) => {
+      console.log('[SpeechRecognition] Got result:', event.results)
       let interim = ''
       let final = ''
 
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const transcriptText = event.results[i][0].transcript
+        console.log('[SpeechRecognition] Transcript:', transcriptText, 'isFinal:', event.results[i].isFinal)
 
         if (event.results[i].isFinal) {
           final += transcriptText + ' '
