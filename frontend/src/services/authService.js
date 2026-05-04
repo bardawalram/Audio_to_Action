@@ -13,6 +13,14 @@ const authService = {
   },
 
   /**
+   * Register new user
+   */
+  register: async (data) => {
+    const response = await api.post('/auth/register/', data)
+    return response.data
+  },
+
+  /**
    * Logout user
    */
   logout: async () => {

@@ -33,7 +33,9 @@ class CommandExecutor:
         Returns:
             dict: Confirmation data to display
         """
-        if intent == 'BATCH_UPDATE_QUESTION_MARKS':
+        if intent == 'BATCH_UPDATE_MARKS':
+            return cls._prepare_batch_marks_confirmation(entities, user)
+        elif intent == 'BATCH_UPDATE_QUESTION_MARKS':
             return cls._prepare_batch_question_marks_confirmation(entities, user)
         elif intent == 'UPDATE_QUESTION_MARKS':
             return cls._prepare_question_marks_confirmation(entities, user)
@@ -98,7 +100,9 @@ class CommandExecutor:
         Returns:
             dict: Execution result
         """
-        if intent == 'BATCH_UPDATE_QUESTION_MARKS':
+        if intent == 'BATCH_UPDATE_MARKS':
+            return cls._execute_batch_marks(entities, confirmation_data, user)
+        elif intent == 'BATCH_UPDATE_QUESTION_MARKS':
             return cls._execute_batch_question_marks_update(entities, confirmation_data, user)
         elif intent == 'UPDATE_QUESTION_MARKS':
             return cls._execute_question_marks_update(entities, confirmation_data, user)
@@ -165,14 +169,6 @@ class CommandExecutor:
             raise ValueError(f"Section {entities['section']} not found")
         except Student.DoesNotExist:
             raise ValueError(f"Student with roll number {entities['roll_number']} not found in class {entities['class']}{entities['section']}")
-
-        # Check teacher permissions
-        if user.role == 'TEACHER':
-            teacher_profile = getattr(user, 'teacher_profile', None)
-            if teacher_profile:
-                assigned_classes = teacher_profile.assigned_classes.all()
-                if class_section not in assigned_classes:
-                    raise PermissionError(f"You are not assigned to class {entities['class']}{entities['section']}")
 
         # Get default exam type
         exam_type = ExamType.objects.filter(
@@ -331,14 +327,6 @@ class CommandExecutor:
             raise ValueError(f"Class {entities['class']} not found")
         except Section.DoesNotExist:
             raise ValueError(f"Section {entities['section']} not found")
-
-        # Check teacher permissions
-        if user.role == 'TEACHER':
-            teacher_profile = getattr(user, 'teacher_profile', None)
-            if teacher_profile:
-                assigned_classes = teacher_profile.assigned_classes.all()
-                if class_section not in assigned_classes:
-                    raise PermissionError(f"You are not assigned to class {entities['class']}{entities['section']}")
 
         # Get students count
         students = Student.objects.filter(class_section=class_section, is_active=True)
@@ -566,14 +554,6 @@ class CommandExecutor:
                 if not class_section:
                     raise ValueError(f"Class {entities['class']}{entities['section']} not found")
 
-                # Check teacher permissions
-                if user.role == 'TEACHER':
-                    teacher_profile = getattr(user, 'teacher_profile', None)
-                    if teacher_profile:
-                        assigned_classes = teacher_profile.assigned_classes.all()
-                        if class_section not in assigned_classes:
-                            raise PermissionError(f"You are not assigned to class {entities['class']}{entities['section']}")
-
                 # Build URL with optional exam type parameter
                 base_url = f"/{page_type}/{entities['class']}/{entities['section']}"
                 exam_type = entities.get('exam_type')
@@ -747,22 +727,24 @@ class CommandExecutor:
         """
         Execute navigation command (create audit log for tracking).
         """
+        message = confirmation_data.get('message', f'Voice navigation: {intent}')
+
         # Create audit log for navigation
         AuditLog.objects.create(
             user=user,
             action='VOICE_COMMAND',
             model_name='VoiceCommand',
-            description=f"Voice navigation: {confirmation_data['message']}"
+            description=f"Voice navigation: {message}"
         )
 
         return {
             'success': True,
             'navigation': {
-                'url': confirmation_data['url'],
-                'type': confirmation_data['navigation_type'],
-                'page_type': confirmation_data['page_type']
+                'url': confirmation_data.get('url', '/'),
+                'type': confirmation_data.get('navigation_type', 'navigate'),
+                'page_type': confirmation_data.get('page_type', 'unknown')
             },
-            'message': confirmation_data['message']
+            'message': message
         }
 
     @classmethod
@@ -780,6 +762,63 @@ class CommandExecutor:
         """
         # Use the same logic as marks entry (it already handles updates)
         return cls._execute_marks_entry(entities, confirmation_data, user)
+
+    @classmethod
+    def _prepare_batch_marks_confirmation(cls, entities, user):
+        """
+        Prepare confirmation for batch marks update (multiple students).
+        """
+        students_data = entities.get('students', [])
+        if not students_data:
+            raise ValueError("No student marks data found in command")
+
+        results = []
+        for student_entity in students_data:
+            try:
+                confirmation = cls._prepare_marks_confirmation(student_entity, user)
+                results.append(confirmation)
+            except ValueError as e:
+                logger.warning(f"Skipping student roll {student_entity.get('roll_number')}: {e}")
+                results.append({
+                    'error': str(e),
+                    'roll_number': student_entity.get('roll_number'),
+                })
+
+        if not any('student' in r for r in results):
+            raise ValueError("Could not find any valid students from the command")
+
+        return {
+            'batch': True,
+            'students': results,
+            'total_students': len([r for r in results if 'student' in r]),
+        }
+
+    @classmethod
+    @transaction.atomic
+    def _execute_batch_marks(cls, entities, confirmation_data, user):
+        """
+        Execute batch marks update for multiple students.
+        """
+        results = []
+        for student_conf in confirmation_data.get('students', []):
+            if 'error' in student_conf:
+                continue
+            try:
+                result = cls._execute_marks_entry(
+                    {},  # entities not needed, confirmation_data has everything
+                    student_conf,
+                    user
+                )
+                results.append(result)
+            except Exception as e:
+                logger.error(f"Failed to update marks for student {student_conf.get('student', {}).get('roll_number')}: {e}")
+                results.append({'error': str(e)})
+
+        return {
+            'batch': True,
+            'results': results,
+            'total_updated': len([r for r in results if 'error' not in r]),
+        }
 
     @classmethod
     def _prepare_question_marks_confirmation(cls, entities, user):

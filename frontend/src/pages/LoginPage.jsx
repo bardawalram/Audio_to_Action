@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link, useLocation } from 'react-router-dom'
 import { useDispatch, useSelector } from 'react-redux'
 import { MicrophoneIcon } from '@heroicons/react/24/solid'
 import authService from '../services/authService'
@@ -13,6 +13,8 @@ const LoginPage = () => {
   const navigate = useNavigate()
   const dispatch = useDispatch()
   const { loading, error } = useSelector((state) => state.auth)
+  const location = useLocation()
+  const justRegistered = location.state?.registered
 
   const [credentials, setCredentials] = useState({
     username: '',
@@ -71,12 +73,19 @@ const LoginPage = () => {
               <MicrophoneIcon className="w-12 h-12 text-blue-600" />
             </div>
           </div>
-          <h1 className="text-3xl font-bold text-gray-900">ReATOA</h1>
+          <h1 className="text-3xl font-bold text-gray-900">ATOA</h1>
           <p className="text-gray-600 mt-2">Voice-Driven School ERP System</p>
         </div>
 
         {/* Login Form */}
         <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Success Message after registration */}
+          {justRegistered && (
+            <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded">
+              <p className="text-sm">Account created successfully! Please sign in.</p>
+            </div>
+          )}
+
           {/* Error Message */}
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
@@ -134,8 +143,16 @@ const LoginPage = () => {
           </button>
         </form>
 
+        {/* Sign Up Link */}
+        <p className="text-center text-sm text-gray-600 mt-6">
+          Don't have an account?{' '}
+          <Link to="/signup" className="text-blue-600 font-semibold hover:text-blue-700">
+            Sign Up
+          </Link>
+        </p>
+
         {/* Demo Credentials */}
-        <div className="mt-6 pt-6 border-t border-gray-200">
+        <div className="mt-4 pt-4 border-t border-gray-200">
           <p className="text-sm text-gray-600 text-center mb-2">
             Demo Credentials:
           </p>

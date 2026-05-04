@@ -18,6 +18,7 @@ import {
 import MarksPreview from '../marks/MarksPreview'
 import QuestionMarksPreview from '../marks/QuestionMarksPreview'
 import BatchQuestionMarksPreview from '../marks/BatchQuestionMarksPreview'
+import BatchMarksPreview from '../marks/BatchMarksPreview'
 import AttendancePreview from '../attendance/AttendancePreview'
 import StudentDetailsPreview from '../common/StudentDetailsPreview'
 import NavigationPreview from '../common/NavigationPreview'
@@ -291,6 +292,50 @@ const generateAndDownloadReport = (data) => {
   }
 }
 
+// Helper to convert spoken number words to digits in a transcript
+const convertNumberWords = (text) => {
+  const ones = {
+    'zero': 0, 'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
+    'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10,
+    'eleven': 11, 'twelve': 12, 'thirteen': 13, 'fourteen': 14, 'fifteen': 15,
+    'sixteen': 16, 'seventeen': 17, 'eighteen': 18, 'nineteen': 19,
+  }
+  const tens = {
+    'twenty': 20, 'thirty': 30, 'forty': 40, 'fifty': 50,
+    'sixty': 60, 'seventy': 70, 'eighty': 80, 'ninety': 90,
+  }
+  // Replace "hundred" patterns: "one hundred" → 100
+  let result = text.replace(
+    /\b(one|two|three|four|five|six|seven|eight|nine)\s+hundred(?:\s+(?:and\s+)?((?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:\s+(?:one|two|three|four|five|six|seven|eight|nine))?|(?:ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen)|(?:one|two|three|four|five|six|seven|eight|nine)))?\b/gi,
+    (match, h, rest) => {
+      const hVal = ones[h.toLowerCase()] * 100
+      if (!rest) return String(hVal)
+      const parts = rest.trim().toLowerCase().split(/\s+/)
+      let rVal = 0
+      for (const p of parts) {
+        if (p === 'and') continue
+        if (tens[p]) rVal += tens[p]
+        else if (ones[p] !== undefined) rVal += ones[p]
+      }
+      return String(hVal + rVal)
+    }
+  )
+  // Replace "twenty one" → 21, etc.
+  result = result.replace(
+    /\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:\s+(one|two|three|four|five|six|seven|eight|nine))?\b/gi,
+    (match, t, o) => {
+      const val = tens[t.toLowerCase()] + (o ? ones[o.toLowerCase()] : 0)
+      return String(val)
+    }
+  )
+  // Replace single number words
+  result = result.replace(
+    /\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen)\b/gi,
+    (match) => String(ones[match.toLowerCase()])
+  )
+  return result
+}
+
 const ConfirmationDialog = () => {
   const dispatch = useDispatch()
   const navigate = useNavigate()
@@ -370,6 +415,8 @@ const ConfirmationDialog = () => {
     recognition.interimResults = false
     recognition.lang = 'en-IN'
 
+    let shouldKeepListening = true
+
     recognition.onstart = () => {
       setIsListeningForConfirm(true)
       setVoiceStatus('Listening for "Confirm" or "Cancel"...')
@@ -380,12 +427,63 @@ const ConfirmationDialog = () => {
       console.log('[VoiceConfirm] Heard:', transcript)
       setVoiceStatus(`Heard: "${transcript}"`)
 
+      // Check for section selection when SELECT_SECTION dialog is open
+      const currentIntent = document.querySelector('[data-voice-intent]')?.dataset?.voiceIntent
+      const sectionsData = document.querySelector('[data-voice-sections]')?.dataset?.voiceSections
+      if (currentIntent === 'SELECT_SECTION' && sectionsData) {
+        try {
+          const sections = JSON.parse(sectionsData)
+          // Match spoken section name: "A", "section A", "B", "section B", etc.
+          const sectionMatch = transcript.match(/\b(?:section\s+)?([a-z])\b/i)
+          if (sectionMatch) {
+            const spokenSection = sectionMatch[1].toUpperCase()
+            const matched = sections.find(s => s.name === spokenSection)
+            if (matched) {
+              setVoiceStatus(`Navigating to Section ${spokenSection}...`)
+              // Simulate the section button click
+              window.dispatchEvent(new CustomEvent('voiceSectionSelect', { detail: matched }))
+              return
+            }
+          }
+        } catch(e) { /* ignore parse errors */ }
+      }
+
+      // Check for voice marks editing: "maths 78", "english 90", "science 85"
+      // Convert number words to digits first (Web Speech API may say "seventy eight" instead of "78")
+      const normalizedTranscript = convertNumberWords(transcript)
+      console.log('[VoiceConfirm] Normalized for marks edit:', normalizedTranscript)
+
+      const subjectMap = {
+        'math': 'Mathematics', 'maths': 'Mathematics', 'mathematics': 'Mathematics',
+        'hindi': 'Hindi',
+        'english': 'English',
+        'science': 'Science',
+        'social': 'Social Studies', 'social studies': 'Social Studies', 'sst': 'Social Studies',
+        'computer': 'Computer', 'computer science': 'Computer',
+      }
+      const marksEditMatch = normalizedTranscript.match(/\b(math(?:s|ematics)?|hindi|english|science|social(?:\s+studies)?|sst|computer(?:\s+science)?)\s+(\d+)\b/i)
+      if (marksEditMatch) {
+        const spokenSubject = marksEditMatch[1].toLowerCase()
+        const newMarks = parseInt(marksEditMatch[2])
+        const subjectName = subjectMap[spokenSubject]
+
+        if (subjectName && newMarks >= 0 && newMarks <= 100) {
+          setVoiceStatus(`Updating ${subjectName} to ${newMarks}...`)
+          window.dispatchEvent(new CustomEvent('voiceMarksEdit', {
+            detail: { subject: subjectName, marks: newMarks }
+          }))
+          setVoiceStatus('Edit applied! Say more edits, "Confirm" or "Cancel"')
+          return
+        }
+      }
+
       // Check for confirm commands
       if (transcript.includes('confirm') || transcript.includes('yes') ||
           transcript.includes('okay') || transcript.includes('ok') ||
           transcript.includes('proceed') || transcript.includes('haan') ||
           transcript.includes('theek hai') || transcript.includes('thik hai')) {
         setVoiceStatus('Confirming...')
+        shouldKeepListening = false
         if (confirmActionRef.current) confirmActionRef.current()
       }
       // Check for cancel commands
@@ -394,25 +492,41 @@ const ConfirmationDialog = () => {
                transcript.includes('nahi') || transcript.includes('ruko') ||
                transcript.includes('band karo')) {
         setVoiceStatus('Cancelling...')
+        shouldKeepListening = false
         if (cancelActionRef.current) cancelActionRef.current()
       }
       else {
-        setVoiceStatus('Say "Confirm" or "Cancel"')
-        // Restart listening after a short delay
-        setTimeout(() => {
-          try { recognition.start() } catch(e) { /* ignore */ }
-        }, 1500)
+        const hint = currentIntent === 'SELECT_SECTION'
+          ? 'Say a section name (A, B, C) or "Cancel"'
+          : 'Say "Confirm", "Cancel", or edit marks (e.g. "maths 78")'
+        setVoiceStatus(hint)
+        // Auto-restart handled by onend
       }
     }
 
     recognition.onend = () => {
       setIsListeningForConfirm(false)
+      // Auto-restart if dialog is still open
+      if (shouldKeepListening) {
+        setTimeout(() => {
+          try {
+            recognition.start()
+          } catch(e) { /* ignore */ }
+        }, 500)
+      }
     }
 
     recognition.onerror = (event) => {
       console.log('[VoiceConfirm] Error:', event.error)
       setIsListeningForConfirm(false)
-      if (event.error !== 'no-speech' && event.error !== 'aborted') {
+      if (event.error === 'no-speech' || event.error === 'aborted') {
+        // Still restart on no-speech — user might just be thinking
+        if (shouldKeepListening) {
+          setTimeout(() => {
+            try { recognition.start() } catch(e) { /* ignore */ }
+          }, 500)
+        }
+      } else {
         setVoiceStatus('')
       }
     }
@@ -427,10 +541,64 @@ const ConfirmationDialog = () => {
     }, 800)
 
     return () => {
+      shouldKeepListening = false
       clearTimeout(timer)
       try { recognition.stop() } catch(e) { /* ignore */ }
     }
   }, [showConfirmationDialog])
+
+  // Handle voice section selection
+  useEffect(() => {
+    const handleVoiceSection = (e) => {
+      const section = e.detail
+      if (section && section.url) {
+        dispatch(closeConfirmationDialog())
+        dispatch(rejectCommand())
+        navigate(section.url)
+        dispatch(showNotification({
+          type: 'success',
+          message: `Navigating to ${section.display}`,
+        }))
+      }
+    }
+    window.addEventListener('voiceSectionSelect', handleVoiceSection)
+    return () => window.removeEventListener('voiceSectionSelect', handleVoiceSection)
+  }, [dispatch, navigate])
+
+  // Handle voice marks editing in confirmation dialog
+  useEffect(() => {
+    const handleVoiceMarksEdit = (e) => {
+      const { subject, marks } = e.detail
+      if (!subject || marks == null) return
+
+      const currentData = editedData || confirmationData
+      if (!currentData) return
+
+      // Handle single student marks (UPDATE_MARKS / ENTER_MARKS)
+      if (currentData.marks_table) {
+        const newMarksTable = currentData.marks_table.map(m =>
+          m.subject === subject ? { ...m, marks_obtained: marks } : m
+        )
+        const updated = { ...currentData, marks_table: newMarksTable }
+        setEditedData(updated)
+        console.log(`[VoiceEdit] Updated ${subject} to ${marks}`)
+      }
+      // Handle batch marks (BATCH_UPDATE_MARKS)
+      else if (currentData.students) {
+        // Update the first student that has this subject (or all — user can specify)
+        const updatedStudents = currentData.students.map(s => {
+          if (!s.marks_table) return s
+          const newMarksTable = s.marks_table.map(m =>
+            m.subject === subject ? { ...m, marks_obtained: marks } : m
+          )
+          return { ...s, marks_table: newMarksTable }
+        })
+        setEditedData({ ...currentData, students: updatedStudents })
+      }
+    }
+    window.addEventListener('voiceMarksEdit', handleVoiceMarksEdit)
+    return () => window.removeEventListener('voiceMarksEdit', handleVoiceMarksEdit)
+  }, [editedData, confirmationData])
 
   if (!showConfirmationDialog || !confirmationData) {
     return null
@@ -696,6 +864,51 @@ const ConfirmationDialog = () => {
         }
       }
 
+      // Update localStorage for batch marks update
+      if (intent === 'BATCH_UPDATE_MARKS') {
+        console.log('=== UPDATING BATCH MARKS IN LOCALSTORAGE ===')
+        const studentsToUpdate = activeData?.students || []
+
+        studentsToUpdate.forEach(studentData => {
+          if (studentData.error || !studentData.student || !studentData.marks_table) return
+
+          const { student, marks_table } = studentData
+          const classMatch = student.class.match(/(\d+)(?:th|st|nd|rd)?([A-Z])/)
+          if (!classMatch) return
+
+          const [, classNum, section] = classMatch
+          const examType = 'UNIT_TEST'
+          const storageKey = `marks_${classNum}${section}_${examType}`
+
+          const existingMarks = JSON.parse(localStorage.getItem(storageKey) || '{}')
+          const studentKey = student.roll_number
+
+          if (!existingMarks[studentKey]) {
+            existingMarks[studentKey] = {}
+          }
+
+          const subjectMap = {
+            'Mathematics': 1, 'Hindi': 2, 'English': 3,
+            'Science': 4, 'Social Studies': 5
+          }
+
+          marks_table.forEach(mark => {
+            const subjectId = subjectMap[mark.subject]
+            if (subjectId) {
+              existingMarks[studentKey][subjectId] = mark.marks_obtained
+            }
+          })
+
+          localStorage.setItem(storageKey, JSON.stringify(existingMarks))
+          window.dispatchEvent(new StorageEvent('storage', {
+            key: storageKey,
+            newValue: JSON.stringify(existingMarks),
+            url: window.location.href
+          }))
+        })
+        console.log('=== BATCH MARKS SAVED TO LOCALSTORAGE ===')
+      }
+
       // Handle download progress report
       if (intent === 'DOWNLOAD_PROGRESS_REPORT') {
         console.log('=== GENERATING PROGRESS REPORT PDF ===')
@@ -927,7 +1140,10 @@ const ConfirmationDialog = () => {
         )
       case 'SELECT_SECTION':
         return (
-          <div className="space-y-4">
+          <div className="space-y-4"
+            data-voice-intent="SELECT_SECTION"
+            data-voice-sections={JSON.stringify(confirmationData.sections || [])}
+          >
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
               <p className="text-blue-800 font-medium mb-4">{confirmationData.message}</p>
               <div className="grid grid-cols-3 gap-3">
@@ -949,9 +1165,12 @@ const ConfirmationDialog = () => {
                   </button>
                 ))}
               </div>
+              <p className="text-xs text-blue-600 mt-3 text-center">Say a section name (A, B, C) or click to select</p>
             </div>
           </div>
         )
+      case 'BATCH_UPDATE_MARKS':
+        return <BatchMarksPreview data={activeData} onUpdate={handleDataUpdate} />
       case 'BATCH_UPDATE_QUESTION_MARKS':
         return <BatchQuestionMarksPreview data={activeData} onUpdate={handleDataUpdate} />
       case 'UPDATE_QUESTION_MARKS':

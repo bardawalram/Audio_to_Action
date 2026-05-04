@@ -4,6 +4,7 @@ import { useSelector, useDispatch } from 'react-redux'
 import { setUser, logout } from './store/slices/authSlice'
 import authService from './services/authService'
 import LoginPage from './pages/LoginPage'
+import SignupPage from './pages/SignupPage'
 import DashboardPage from './pages/DashboardPage'
 import AccountantDashboardPage from './pages/AccountantDashboardPage'
 import AttendanceListPage from './pages/AttendanceListPage'
@@ -49,6 +50,10 @@ function App() {
       <Route
         path="/login"
         element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LoginPage />}
+      />
+      <Route
+        path="/signup"
+        element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <SignupPage />}
       />
       <Route
         path="/dashboard"

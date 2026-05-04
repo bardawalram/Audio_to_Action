@@ -147,7 +147,7 @@ def upload_voice_command(request):
             'NAVIGATE_DASHBOARD', 'CANCEL', 'UNKNOWN', 'SELECT_SECTION', 'SELECT_STUDENT',
         }
         TEACHER_INTENTS = {
-            'UPDATE_MARKS', 'ENTER_MARKS', 'MARK_ATTENDANCE', 'VIEW_STUDENT',
+            'UPDATE_MARKS', 'ENTER_MARKS', 'BATCH_UPDATE_MARKS', 'MARK_ATTENDANCE', 'VIEW_STUDENT',
             'NAVIGATE_MARKS', 'NAVIGATE_ATTENDANCE', 'NAVIGATE_REPORTS',
             'NAVIGATE_CLASS_REPORT', 'NAVIGATE_STUDENT_REPORT', 'NAVIGATE_ATTENDANCE_REPORT',
             'OPEN_MARKS_SHEET', 'OPEN_ATTENDANCE_SHEET', 'SELECT_EXAM_TYPE',
@@ -179,6 +179,15 @@ def upload_voice_command(request):
             if on_fee_page or user_role == 'ACCOUNTANT':
                 logger.info(f"[PAGE-CONTEXT] Redirecting NAVIGATE_REPORTS → NAVIGATE_FEE_REPORTS")
                 intent = 'NAVIGATE_FEE_REPORTS'
+
+        # Page-aware: generic open/navigate from attendance page → stay in attendance context
+        if context_page and context_page.startswith('/attendance'):
+            if intent == 'OPEN_MARKS_SHEET':
+                logger.info(f"[PAGE-CONTEXT] Redirecting OPEN_MARKS_SHEET → OPEN_ATTENDANCE_SHEET (user is on attendance page)")
+                intent = 'OPEN_ATTENDANCE_SHEET'
+            elif intent == 'NAVIGATE_MARKS':
+                logger.info(f"[PAGE-CONTEXT] Redirecting NAVIGATE_MARKS → NAVIGATE_ATTENDANCE (user is on attendance page)")
+                intent = 'NAVIGATE_ATTENDANCE'
 
         voice_command.intent = intent
         voice_command.save()
@@ -277,8 +286,16 @@ def upload_voice_command(request):
                             class_obj=class_obj
                         ).select_related('section').order_by('section__name')
 
-                        # Role-aware URL: accountants go to fee pages, teachers go to marks
-                        url_prefix = '/fees' if user_role == 'ACCOUNTANT' else '/marks'
+                        # Context-aware URL: use current page to determine target
+                        if user_role == 'ACCOUNTANT':
+                            url_prefix = '/fees'
+                            page_label = 'fee collection'
+                        elif context_page and context_page.startswith('/attendance'):
+                            url_prefix = '/attendance'
+                            page_label = 'attendance'
+                        else:
+                            url_prefix = '/marks'
+                            page_label = 'marks'
 
                         available_sections = [
                             {
@@ -299,7 +316,7 @@ def upload_voice_command(request):
                                     'transcription': voice_command.transcription,
                                     'intent': 'SELECT_SECTION',
                                     'confirmation_data': {
-                                        'message': f"Select a section for Class {class_obj.name} {'fee collection' if user_role == 'ACCOUNTANT' else 'marks'}",
+                                        'message': f"Select a section for Class {class_obj.name} {page_label}",
                                         'class_number': class_number,
                                         'class_name': class_obj.name,
                                         'sections': available_sections,

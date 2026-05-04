@@ -14,6 +14,8 @@ const AttendanceSheetPage = () => {
   const [date, setDate] = useState(location.state?.date || new Date().toISOString().split('T')[0])
   const [saved, setSaved] = useState(false)
 
+  const storageKey = `attendance_${classNum}${section}_${date}`
+
   useEffect(() => {
     // Generate dummy students (20 per class)
     const studentList = []
@@ -27,13 +29,26 @@ const AttendanceSheetPage = () => {
     }
     setStudents(studentList)
 
-    // Initialize attendance (all absent by default - will be updated by voice command or manual toggle)
-    const initialAttendance = {}
-    studentList.forEach(student => {
-      initialAttendance[student.id] = 'ABSENT'
-    })
-    setAttendance(initialAttendance)
-  }, [classNum, section])
+    // Load saved attendance from localStorage, or initialize as ABSENT
+    const savedData = localStorage.getItem(storageKey)
+    if (savedData) {
+      try {
+        setAttendance(JSON.parse(savedData))
+      } catch {
+        const initialAttendance = {}
+        studentList.forEach(student => {
+          initialAttendance[student.id] = 'ABSENT'
+        })
+        setAttendance(initialAttendance)
+      }
+    } else {
+      const initialAttendance = {}
+      studentList.forEach(student => {
+        initialAttendance[student.id] = 'ABSENT'
+      })
+      setAttendance(initialAttendance)
+    }
+  }, [classNum, section, date, storageKey])
 
   // Listen for voice command attendance updates
   useEffect(() => {
@@ -44,25 +59,43 @@ const AttendanceSheetPage = () => {
       // Update all students based on voice command
       const newAttendance = {}
       students.forEach(student => {
-        // Check if this student is excluded
         const isExcluded = excludedRolls && excludedRolls.includes(student.rollNumber)
-        // If excluded, set opposite status; otherwise use the commanded status
         newAttendance[student.id] = isExcluded ? (status === 'PRESENT' ? 'ABSENT' : 'PRESENT') : status
       })
       setAttendance(newAttendance)
+
+      // Auto-save
+      localStorage.setItem(storageKey, JSON.stringify(newAttendance))
       setSaved(true)
       console.log(`[AttendanceSheetPage] Updated ${markedCount} students to ${status}`)
     }
 
     window.addEventListener('attendanceUpdated', handleAttendanceUpdate)
     return () => window.removeEventListener('attendanceUpdated', handleAttendanceUpdate)
-  }, [students])
+  }, [students, storageKey])
+
+  // Listen for storage changes (from other tabs or voice commands)
+  useEffect(() => {
+    const handleStorage = (e) => {
+      if (e.key === storageKey && e.newValue) {
+        try {
+          setAttendance(JSON.parse(e.newValue))
+        } catch { /* ignore */ }
+      }
+    }
+    window.addEventListener('storage', handleStorage)
+    return () => window.removeEventListener('storage', handleStorage)
+  }, [storageKey])
 
   const toggleAttendance = (studentId) => {
-    setAttendance(prev => ({
-      ...prev,
-      [studentId]: prev[studentId] === 'PRESENT' ? 'ABSENT' : 'PRESENT'
-    }))
+    setAttendance(prev => {
+      const updated = {
+        ...prev,
+        [studentId]: prev[studentId] === 'PRESENT' ? 'ABSENT' : 'PRESENT'
+      }
+      localStorage.setItem(storageKey, JSON.stringify(updated))
+      return updated
+    })
     setSaved(false)
   }
 
@@ -72,6 +105,7 @@ const AttendanceSheetPage = () => {
       newAttendance[student.id] = 'PRESENT'
     })
     setAttendance(newAttendance)
+    localStorage.setItem(storageKey, JSON.stringify(newAttendance))
     setSaved(false)
   }
 
@@ -81,11 +115,12 @@ const AttendanceSheetPage = () => {
       newAttendance[student.id] = 'ABSENT'
     })
     setAttendance(newAttendance)
+    localStorage.setItem(storageKey, JSON.stringify(newAttendance))
     setSaved(false)
   }
 
   const saveAttendance = () => {
-    // Here you would call the API to save attendance
+    localStorage.setItem(storageKey, JSON.stringify(attendance))
     console.log('Saving attendance:', {
       class: classNum,
       section,
