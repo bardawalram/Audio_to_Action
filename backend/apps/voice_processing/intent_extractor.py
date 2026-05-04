@@ -81,12 +81,29 @@ class IntentExtractor:
             r'mark\s+(?:everyone|all|students?)\s+(?:as\s+)?present',
             r'mark\s+(?:everyone|all|students?)\s+(?:as\s+)?absent',
             r'mark\s+(?:all|everyone)\s+(?:as\s+)?present\s+except',
+            r'mark\s+(?:all|everyone)\s+(?:as\s+)?absent\s+except',
             r'mark\s+class\s+\d+\s*[a-z]?\s+(?:as\s+)?present',
+            # Individual student: "mark absent for student 3", "mark student 3 absent"
+            r'mark\s+(?:as\s+)?(?:absent|present)\s+(?:for\s+)?(?:student|roll|rule)\s+\d+',
+            r'mark\s+(?:student|roll|rule)\s+\d+\s+(?:as\s+)?(?:absent|present)',
+            r'mark\s+(?:student|roll|rule)\s+(?:number\s+)?\d+\s+(?:as\s+)?(?:absent|present)',
             # Short forms without "mark" prefix (when on attendance page)
             r'^(?:all|everyone)\s+(?:as\s+)?present[\s\.,;!?]*$',
             r'^(?:all|everyone)\s+(?:as\s+)?absent[\s\.,;!?]*$',
             r'^(?:all|everyone)\s+present\s+except',
+            r'^(?:all|everyone)\s+absent\s+except',
             r'^all\s+present\s+except\s+(?:roll|student|rule)',
+            r'^all\s+absent\s+except\s+(?:roll|student|rule)',
+            # Individual student short forms: "student 3 absent", "roll 5 present"
+            r'^(?:student|roll|rule)\s+\d+\s+(?:as\s+)?(?:absent|present)[\s\.,;!?]*$',
+            r'^(?:absent|present)\s+(?:for\s+)?(?:student|roll|rule)\s+\d+[\s\.,;!?]*$',
+        ],
+        # Batch update marks for MULTIPLE students (MUST be before UPDATE_MARKS)
+        'BATCH_UPDATE_MARKS': [
+            # "update marks for student 3 ... update marks for student 4 ..."
+            r'(?:update|enter|add|set|change)[\.\s]+(?:the\s+)?marks?.*(?:student|roll|rule)[\.\s]+\d+.*(?:update|enter|add|set|change)[\.\s]+(?:the\s+)?marks?.*(?:student|roll|rule)[\.\s]+\d+',
+            # "student 3 maths 90 ... student 4 maths 80 ..."
+            r'(?:student|roll|rule)[\.\s]+\d+\s+(?:maths?|mathematics|hindi|english|science|social|computer)\s+\d+.*(?:student|roll|rule)[\.\s]+\d+\s+(?:maths?|mathematics|hindi|english|science|social|computer)\s+\d+',
         ],
         # Update marks (before ENTER_MARKS and navigation)
         'UPDATE_MARKS': [
@@ -157,6 +174,13 @@ class IntentExtractor:
             r'^open\s+(?:class\s+)?(\d+)\s*([a-z])[\s\.,;!?]*$',  # "open 2c" or "open class 2c"
             r'^go\s+to\s+(\d+)(?:st|nd|rd|th)\s+([a-z])[\s\.,;!?]*$',  # "go to 2nd c"
             r'^go\s+to\s+(?:class\s+)?(\d+)\s*([a-z])[\s\.,;!?]*$',  # "go to 2c" or "go to class 2c"
+            # With "section" keyword and ordinal: "open class 3rd section B", "open 3rd section b"
+            r'open\s+(?:class\s+)?\d+(?:st|nd|rd|th)\s+section\s+[a-z]',
+            r'go\s+to\s+(?:class\s+)?\d+(?:st|nd|rd|th)\s+section\s+[a-z]',
+            r'show\s+(?:class\s+)?\d+(?:st|nd|rd|th)\s+section\s+[a-z]',
+            # With "section" keyword and number: "open class 3 section B"
+            r'open\s+(?:class\s+)?\d+\s+section\s+[a-z]',
+            r'go\s+to\s+(?:class\s+)?\d+\s+section\s+[a-z]',
             # SUPER SHORT: "marks 1a" or "1a marks" or just "1a"
             r'^marks?\s+(\d+)\s*([a-z])[\s\.,;!?]*$',  # "marks 1a"
             r'^(\d+)\s*([a-z])\s+marks?[\s\.,;!?]*$',  # "1a marks"
@@ -188,6 +212,10 @@ class IntentExtractor:
             # Go to patterns: "go to class 1A attendance" or "go to 1A attendance"
             r'go\s+to\s+(?:class\s+)?(\d+)\s*([a-z])\s+attendance',
             r'go\s+to\s+(\d+)(?:st|nd|rd|th)\s*([a-z])?\s+attendance',
+            # With "section" keyword: "open class 3rd section B attendance"
+            r'open\s+(?:class\s+)?\d+(?:st|nd|rd|th)\s+section\s+[a-z]\s+attendance',
+            r'go\s+to\s+(?:class\s+)?\d+(?:st|nd|rd|th)\s+section\s+[a-z]\s+attendance',
+            r'open\s+(?:class\s+)?\d+\s+section\s+[a-z]\s+attendance',
             # SUPER SHORT: "attendance 1a" or "1a attendance"
             r'^attendance\s+(\d+)\s*([a-z])[\s\.,;!?]*$',  # "attendance 1a"
             r'^(\d+)\s*([a-z])\s+attendance[\s\.,;!?]*$',  # "1a attendance"
@@ -339,9 +367,9 @@ class IntentExtractor:
             r'(?:jaama|jama)\s+(?:karo|kar\s+do|kar)',
             r'paisa\s+(?:nikalo|nikaal)',
             r'fee\s+(?:bharo|jama\s+karo|le\s+lo)',
-            # Student name-based: "collect fee from Rahul", "take fee from Amit"
-            r'collect\s+(?:fee|fees|payment)\s+(?:from|for|of)\s+[a-z]+',
-            r'take\s+(?:fee|fees|payment)\s+(?:from|for|of)\s+[a-z]+',
+            # Student name-based: "collect fee from Rahul", "take fee from Amit", "collect fee 5000 from Rahul"
+            r'collect\s+(?:fee|fees|payment)\s+(?:(?:rupees?\s+)?\d+\s+)?(?:from|for|of)\s+[a-z]+',
+            r'take\s+(?:fee|fees|payment)\s+(?:(?:rupees?\s+)?\d+\s+)?(?:from|for|of)\s+[a-z]+',
             # Fee type: "collect tuition fee", "transport fee collection", "bus fee lo"
             r'collect\s+(?:tuition|transport|bus|hostel|exam|admission|lab|library|annual)\s+(?:fee|fees)',
             r'(?:tuition|transport|bus|hostel|exam|admission|lab|library|annual)\s+(?:fee|fees)\s+(?:collect|lo|lelo|le\s+lo|bharo)',
@@ -606,7 +634,7 @@ class IntentExtractor:
         'sience': 'science', 'scince': 'science', 'sins': 'science',
         'sciens': 'science', 'signes': 'science', 'sines': 'science',
         'since': 'science', 'sens': 'science', 'sains': 'science',
-        'sence': 'science', 'scence': 'science', 'sinse': 'science',
+        'sence': 'science', 'scence': 'science', 'sinse': 'science', 'sin': 'science',
 
         # Social Studies variations
         'so shall': 'social', 'so shell': 'social', 'soshul': 'social',
@@ -711,6 +739,10 @@ class IntentExtractor:
         # Present/Absent variations
         'prasent': 'present', 'presant': 'present',
         'absant': 'absent', 'absen': 'absent',
+
+        # "Mark all" mishearings (common Indian English STT errors)
+        'mahakal': 'mark all', 'maha kal': 'mark all', 'mahaall': 'mark all',
+        'markall': 'mark all', 'marcal': 'mark all', 'markal': 'mark all',
 
         # Fee/Show variations (common Whisper mishearings)
         'should fee': 'show fee', 'should be': 'show fee',
@@ -1317,6 +1349,16 @@ class IntentExtractor:
         for prefix in command_prefixes:
             matches = list(re.finditer(prefix, text, re.IGNORECASE))
             if len(matches) >= 2:
+                # Check if this is a batch command (multiple students/rolls with different data)
+                # If text between occurrences contains different roll/student numbers, it's batch - don't dedup
+                first_end = matches[0].end()
+                last_start = matches[-1].start()
+                between = text[first_end:last_start]
+                roll_numbers = re.findall(r'(?:student|roll|rule)\s+(\d+)', between + text[last_start:], re.IGNORECASE)
+                if len(set(roll_numbers)) >= 2:
+                    logger.info(f"[DEDUP] Skipping dedup for '{prefix}' - batch command with multiple students: {roll_numbers}")
+                    continue
+
                 # Keep from the last occurrence (speaker's final/corrected version)
                 last_match = matches[-1]
                 new_text = text[last_match.start():].strip()
@@ -1448,6 +1490,9 @@ class IntentExtractor:
         # ============================================================
         for mishearing, correct in cls.SUBJECT_MISHEARINGS.items():
             text_lower = re.sub(rf'\b{re.escape(mishearing)}\b', correct, text_lower)
+
+        # Contextual fix: "in the <number>" is likely "hindi <number>" in marks context
+        text_lower = re.sub(r'\bin the\s+(\d+)', r'hindi \1', text_lower)
 
         logger.info(f"[NORM-0a] After subject mishearing fix: '{text_lower}'")
 
@@ -1989,7 +2034,21 @@ class IntentExtractor:
         # Check 2: Intent-specific completeness checks
         # ============================================================
 
-        if intent == 'UPDATE_MARKS' or intent == 'ENTER_MARKS':
+        if intent == 'BATCH_UPDATE_MARKS':
+            # Need: at least two student/roll mentions with subject marks
+            roll_matches = re.findall(r'(?:roll|student|rule)\s*\d+', text_lower)
+            has_subject_marks = bool(re.search(r'(maths?|hindi|english|science|social|computer)\s*\d+', text_lower))
+
+            if len(roll_matches) < 2:
+                result['is_complete'] = False
+                result['missing'].append('at least two students')
+            if not has_subject_marks:
+                result['is_complete'] = False
+                result['missing'].append('subject and marks')
+            if not result['is_complete']:
+                result['suggestion'] = f"Missing: {', '.join(result['missing'])}. Example: 'Update marks for student 1 maths 90 hindi 80 update marks for student 2 maths 85'"
+
+        elif intent == 'UPDATE_MARKS' or intent == 'ENTER_MARKS':
             # Need: roll number + at least one subject with marks
             has_roll = bool(re.search(r'(?:roll|student|rule)\s*\d+', text_lower))
             has_subject_marks = bool(re.search(r'(maths?|hindi|english|science|social|computer)\s*\d+', text_lower))
@@ -2132,7 +2191,9 @@ class EntityExtractor:
         # Normalize text before entity extraction (same as intent extraction)
         text = IntentExtractor.normalize_stt_text(text)
 
-        if intent == 'BATCH_UPDATE_QUESTION_MARKS':
+        if intent == 'BATCH_UPDATE_MARKS':
+            return cls._extract_batch_marks_entities(text, context)
+        elif intent == 'BATCH_UPDATE_QUESTION_MARKS':
             return cls._extract_batch_question_marks_entities(text, context)
         elif intent == 'UPDATE_QUESTION_MARKS':
             return cls._extract_question_marks_entities(text, context)
@@ -2234,6 +2295,78 @@ class EntityExtractor:
 
         logger.info(f"Extracted marks entities: {entities}")
         return entities
+
+    @classmethod
+    def _extract_batch_marks_entities(cls, text, context=None):
+        """
+        Extract entities for batch marks update (multiple students in one command).
+
+        Splits text by student segments and extracts marks for each student.
+        Example: "update marks for student 3 maths 100 hindi 92 update marks for student 4 hindi 928 english 94"
+        """
+        if context is None:
+            context = {}
+
+        logger.info(f"Extracting BATCH marks entities from text: '{text}'")
+
+        # Split text into per-student segments
+        # Pattern: split on "update/enter/add/set/change marks" or "student/roll" boundaries
+        split_pattern = r'(?:update|enter|add|set|change)[\.\s]+(?:the\s+)?marks?[\.\s]+(?:for\s+|of\s+|to\s+)?'
+        segments = re.split(split_pattern, text, flags=re.IGNORECASE)
+        segments = [s.strip() for s in segments if s and s.strip()]
+
+        # If splitting by "update marks" didn't work well, try splitting by "student/roll" keywords
+        if len(segments) < 2:
+            # Try splitting on second occurrence of student/roll
+            student_pattern = r'(?=(?:student|roll|rule)[\.\s]+(?:number\s+|no\.?\s+|#)?\d+)'
+            segments = re.split(student_pattern, text, flags=re.IGNORECASE)
+            segments = [s.strip() for s in segments if s and s.strip()]
+
+        logger.info(f"Split into {len(segments)} segments: {segments}")
+
+        students = []
+        for segment in segments:
+            # Extract roll number from this segment
+            roll_match = re.search(
+                r'(?:student|roll|rule)[\.\s]+(?:number\s+|no\.?\s+|#)?\s*(\d+)',
+                segment, re.IGNORECASE
+            )
+            if not roll_match:
+                continue
+
+            roll_number = int(roll_match.group(1))
+            marks = cls._extract_subject_marks(segment)
+
+            if marks:
+                student_entity = {
+                    'roll_number': roll_number,
+                    'marks': marks,
+                }
+                # Use class/section from context
+                if 'class' in context:
+                    student_entity['class'] = context['class']
+                if 'section' in context:
+                    student_entity['section'] = context['section']
+
+                # Also try extracting class/section from text
+                class_match = re.search(r'class\s+(\d+)', segment, re.IGNORECASE)
+                section_match = re.search(r'(?:class\s+\d+\s*([A-Za-z])|section\s+([A-Za-z]))', segment, re.IGNORECASE)
+                if class_match:
+                    student_entity['class'] = int(class_match.group(1))
+                if section_match:
+                    student_entity['section'] = (section_match.group(1) or section_match.group(2)).upper()
+
+                students.append(student_entity)
+
+        # Fallback: use context class/section for all students
+        for s in students:
+            if 'class' not in s and 'class' in context:
+                s['class'] = context['class']
+            if 'section' not in s and 'section' in context:
+                s['section'] = context['section']
+
+        logger.info(f"Extracted batch marks for {len(students)} students: {students}")
+        return {'students': students}
 
     @classmethod
     def _extract_question_marks_entities(cls, text, context=None):
@@ -2585,7 +2718,7 @@ class EntityExtractor:
 
             # Science - all variations
             'science': 'SCIENCE', 'signs': 'SCIENCE', 'silence': 'SCIENCE',
-            'sience': 'SCIENCE', 'scince': 'SCIENCE', 'sins': 'SCIENCE', 'sci': 'SCIENCE',
+            'sience': 'SCIENCE', 'scince': 'SCIENCE', 'sins': 'SCIENCE', 'sin': 'SCIENCE', 'sci': 'SCIENCE',
 
             # Social Studies - all variations
             'social': 'SOCIAL', 'social studies': 'SOCIAL', 'soshul': 'SOCIAL',
@@ -2616,7 +2749,7 @@ class EntityExtractor:
 
             # Skip if the subject_text itself is ONLY a keyword (roll, rule, class, etc)
             # But allow if it contains valid subject names
-            if subject_text in ['roll', 'rule', 'class', 'grade', 'number', 'section', 'update', 'marks', 'for', 'of']:
+            if subject_text in ['roll', 'rule', 'class', 'grade', 'number', 'section', 'update', 'marks', 'for', 'of', 'student']:
                 logger.info(f"  Skipping - subject text is keyword: '{subject_text}'")
                 continue
 

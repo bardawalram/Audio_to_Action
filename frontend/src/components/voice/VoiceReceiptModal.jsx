@@ -46,7 +46,7 @@ const VoiceReceiptModal = () => {
       <body>
         <div class="receipt">
           <div class="header">
-            <h1>ReATOA School</h1>
+            <h1>ATOA School</h1>
             <p>Fee Payment Receipt</p>
           </div>
           <div class="receipt-no">${r.receiptNumber}</div>
